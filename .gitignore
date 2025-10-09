@@ -1,0 +1,38 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*.test
+*.out
+coverage.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+vendor/
+
+# Swagger generated files
+# Uncomment to ignore swagger docs (not recommended - better to commit them)
+# docs/docs.go
+# docs/swagger.json
+# docs/swagger.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

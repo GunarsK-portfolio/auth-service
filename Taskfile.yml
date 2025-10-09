@@ -1,0 +1,47 @@
+version: '3'
+
+tasks:
+  run:
+    desc: Run the auth service locally
+    cmds:
+      - go run cmd/api/main.go
+
+  build:
+    desc: Build the auth service binary
+    cmds:
+      - go build -o bin/auth-service cmd/api/main.go
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  swagger:
+    desc: Generate Swagger documentation
+    cmds:
+      - swag init -g cmd/api/main.go -o docs
+
+  clean:
+    desc: Clean build artifacts and docs
+    cmds:
+      - rm -rf bin/ docs/
+
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t auth-service .
+
+  docker-run:
+    desc: Run service with docker-compose
+    cmds:
+      - docker-compose up -d
+
+  docker-stop:
+    desc: Stop docker-compose services
+    cmds:
+      - docker-compose down
+
+  docker-logs:
+    desc: View auth service logs
+    cmds:
+      - docker-compose logs -f auth-service
