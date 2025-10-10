@@ -125,7 +125,16 @@ auth-service/
 ### Login
 
 ```bash
+# Direct access (standalone)
 curl -X POST http://localhost:8084/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }'
+
+# Via Traefik (infrastructure setup)
+curl -X POST http://localhost:81/auth/v1/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "admin",
@@ -145,7 +154,15 @@ Response:
 ### Validate Token
 
 ```bash
+# Direct access (standalone)
 curl -X POST http://localhost:8084/api/v1/auth/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "eyJhbGciOiJIUzI1NiIs..."
+  }'
+
+# Via Traefik (infrastructure setup)
+curl -X POST http://localhost:81/auth/v1/validate \
   -H "Content-Type: application/json" \
   -d '{
     "token": "eyJhbGciOiJIUzI1NiIs..."
@@ -162,7 +179,15 @@ Response:
 ### Refresh Token
 
 ```bash
+# Direct access (standalone)
 curl -X POST http://localhost:8084/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+  }'
+
+# Via Traefik (infrastructure setup)
+curl -X POST http://localhost:81/auth/v1/refresh \
   -H "Content-Type: application/json" \
   -d '{
     "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
@@ -172,7 +197,12 @@ curl -X POST http://localhost:8084/api/v1/auth/refresh \
 ### Logout
 
 ```bash
+# Direct access (standalone)
 curl -X POST http://localhost:8084/api/v1/auth/logout \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+
+# Via Traefik (infrastructure setup)
+curl -X POST http://localhost:81/auth/v1/logout \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
 ```
 

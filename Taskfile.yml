@@ -37,9 +37,9 @@ tasks:
       - docker-compose up -d
 
   docker-stop:
-    desc: Stop docker-compose services
+    desc: Stop auth-service container
     cmds:
-      - docker-compose down
+      - docker stop auth-service
 
   docker-logs:
     desc: View auth service logs
