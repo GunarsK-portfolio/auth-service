@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
+    "config:recommended",
     ":dependencyDashboard",
     ":semanticCommits",
     ":separateMajorReleases",
@@ -11,30 +11,43 @@
     ":label(go)"
   ],
   "timezone": "Europe/Riga",
-  "schedule": ["before 6am on monday"],
-
+  "schedule": [
+    "before 6am on monday"
+  ],
   "packageRules": [
     {
-      "matchManagers": ["gomod"],
+      "matchManagers": [
+        "gomod"
+      ],
       "groupName": "Go dependencies",
       "rangeStrategy": "replace",
       "automerge": true,
-      "labels": ["go", "dependencies"]
+      "labels": [
+        "go",
+        "dependencies"
+      ]
     },
     {
-      "matchManagers": ["dockerfile"],
+      "matchManagers": [
+        "dockerfile"
+      ],
       "groupName": "Docker base images",
       "automerge": false,
-      "labels": ["docker"]
+      "labels": [
+        "docker"
+      ]
     },
     {
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "GitHub Actions",
       "automerge": true,
-      "labels": ["ci"]
+      "labels": [
+        "ci"
+      ]
     }
   ],
-
   "prHourlyLimit": 5,
   "prConcurrentLimit": 10,
   "rebaseWhen": "behind-base-branch"
