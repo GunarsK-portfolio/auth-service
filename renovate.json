@@ -6,45 +6,41 @@
     ":semanticCommits",
     ":separateMajorReleases",
     ":combinePatchMinorReleases",
-    ":automergePatch",
-    ":automergeMinor",
     ":label(go)"
   ],
-  "prCreation": "immediate",
   "timezone": "Europe/Riga",
-  "schedule": [],
+  "schedule": ["every weekend"],
   "packageRules": [
     {
-      "matchManagers": [
-        "gomod"
-      ],
-      "groupName": "Go dependencies",
-      "rangeStrategy": "replace",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch"],
       "automerge": true,
-      "labels": [
-        "go",
-        "dependencies"
-      ]
+      "automergeType": "pr",
+      "labels": ["go", "dependencies", "automerge"]
     },
     {
-      "matchManagers": [
-        "dockerfile"
-      ],
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Go minor updates",
+      "labels": ["go", "dependencies", "minor-update"]
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "labels": ["go", "dependencies", "major-update"]
+    },
+    {
+      "matchManagers": ["dockerfile"],
       "groupName": "Docker base images",
-      "automerge": false,
-      "labels": [
-        "docker"
-      ]
+      "dependencyDashboardApproval": true,
+      "labels": ["docker", "manual-review"]
     },
     {
-      "matchManagers": [
-        "github-actions"
-      ],
+      "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
       "automerge": true,
-      "labels": [
-        "ci"
-      ]
+      "labels": ["ci"]
     }
   ],
   "prHourlyLimit": 5,
