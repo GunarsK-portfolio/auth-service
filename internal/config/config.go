@@ -1,8 +1,9 @@
 package config
 
 import (
-	"os"
 	"time"
+
+	common "github.com/GunarsK-portfolio/portfolio-common/config"
 )
 
 type Config struct {
@@ -21,33 +22,18 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		DBHost:           getEnvRequired("DB_HOST"),
-		DBPort:           getEnvRequired("DB_PORT"),
-		DBUser:           getEnvRequired("DB_USER"),
-		DBPassword:       getEnvRequired("DB_PASSWORD"),
-		DBName:           getEnvRequired("DB_NAME"),
-		RedisHost:        getEnvRequired("REDIS_HOST"),
-		RedisPort:        getEnvRequired("REDIS_PORT"),
-		JWTSecret:        getEnvRequired("JWT_SECRET"),
-		JWTAccessExpiry:  parseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m"), 15*time.Minute),
-		JWTRefreshExpiry: parseDuration(getEnv("JWT_REFRESH_EXPIRY", "168h"), 168*time.Hour),
-		Port:             getEnv("PORT", "8084"),
+		DBHost:           common.GetEnvRequired("DB_HOST"),
+		DBPort:           common.GetEnvRequired("DB_PORT"),
+		DBUser:           common.GetEnvRequired("DB_USER"),
+		DBPassword:       common.GetEnvRequired("DB_PASSWORD"),
+		DBName:           common.GetEnvRequired("DB_NAME"),
+		RedisHost:        common.GetEnvRequired("REDIS_HOST"),
+		RedisPort:        common.GetEnvRequired("REDIS_PORT"),
+		JWTSecret:        common.GetEnvRequired("JWT_SECRET"),
+		JWTAccessExpiry:  parseDuration(common.GetEnv("JWT_ACCESS_EXPIRY", "15m"), 15*time.Minute),
+		JWTRefreshExpiry: parseDuration(common.GetEnv("JWT_REFRESH_EXPIRY", "168h"), 168*time.Hour),
+		Port:             common.GetEnv("PORT", "8084"),
 	}
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvRequired(key string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		panic("Required environment variable " + key + " is not set")
-	}
-	return value
 }
 
 func parseDuration(value string, defaultValue time.Duration) time.Duration {
