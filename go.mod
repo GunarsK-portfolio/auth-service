@@ -3,7 +3,7 @@ module github.com/GunarsK-portfolio/auth-service
 go 1.25.2
 
 require (
-	github.com/GunarsK-portfolio/portfolio-common v0.1.0
+	github.com/GunarsK-portfolio/portfolio-common v0.2.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/redis/go-redis/v9 v9.14.0
