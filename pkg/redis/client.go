@@ -1,3 +1,4 @@
+// Package redis provides Redis client utilities.
 package redis
 
 import (
@@ -8,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// NewClient creates a new Redis client instance.
 func NewClient(cfg *config.Config) *redis.Client {
 	client := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),

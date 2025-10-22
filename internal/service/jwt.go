@@ -7,12 +7,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Claims represents JWT token claims.
 type Claims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
 	jwt.RegisteredClaims
 }
 
+// JWTService defines JWT token operations.
 type JWTService interface {
 	GenerateAccessToken(userID int64, username string) (string, error)
 	GenerateRefreshToken(userID int64, username string) (string, error)
@@ -25,6 +27,7 @@ type jwtService struct {
 	refreshExpiry time.Duration
 }
 
+// NewJWTService creates a new JWTService instance.
 func NewJWTService(secret string, accessExpiry, refreshExpiry time.Duration) JWTService {
 	return &jwtService{
 		secret:        secret,

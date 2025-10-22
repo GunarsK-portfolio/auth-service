@@ -1,3 +1,4 @@
+// Package config handles configuration loading for the auth service.
 package config
 
 import (
@@ -6,6 +7,7 @@ import (
 	common "github.com/GunarsK-portfolio/portfolio-common/config"
 )
 
+// Config holds all configuration for the auth service.
 type Config struct {
 	DBHost           string
 	DBPort           string
@@ -20,6 +22,7 @@ type Config struct {
 	Port             string
 }
 
+// Load reads configuration from environment variables.
 func Load() *Config {
 	return &Config{
 		DBHost:           common.GetEnvRequired("DB_HOST"),

@@ -1,3 +1,4 @@
+// Package repository provides data access layer for the auth service.
 package repository
 
 import (
@@ -5,6 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// UserRepository defines the interface for user data operations.
 type UserRepository interface {
 	FindByUsername(username string) (*models.User, error)
 	FindByEmail(email string) (*models.User, error)
@@ -17,6 +19,7 @@ type userRepository struct {
 	db *gorm.DB
 }
 
+// NewUserRepository creates a new UserRepository instance.
 func NewUserRepository(db *gorm.DB) UserRepository {
 	return &userRepository{db: db}
 }

@@ -1,3 +1,4 @@
+// Package service contains business logic for the auth service.
 package service
 
 import (
@@ -12,21 +13,26 @@ import (
 )
 
 var (
+	// ErrInvalidCredentials is returned when login credentials are invalid.
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUserNotFound       = errors.New("user not found")
+	// ErrUserNotFound is returned when user is not found.
+	ErrUserNotFound = errors.New("user not found")
 )
 
+// LoginRequest contains credentials for user login.
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
+// LoginResponse contains JWT tokens returned after successful login.
 type LoginResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+// AuthService defines authentication operations.
 type AuthService interface {
 	Login(username, password string) (*LoginResponse, error)
 	Logout(token string) error
@@ -40,6 +46,7 @@ type authService struct {
 	redis      *redis.Client
 }
 
+// NewAuthService creates a new AuthService instance.
 func NewAuthService(userRepo repository.UserRepository, jwtService JWTService, redisClient *redis.Client) AuthService {
 	return &authService{
 		userRepo:   userRepo,

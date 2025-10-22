@@ -1,3 +1,4 @@
+// Package routes defines HTTP routes for the auth service.
 package routes
 
 import (
@@ -7,6 +8,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// Setup configures all HTTP routes for the application.
 func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler) {
 	// Enable CORS
 	router.Use(func(c *gin.Context) {
