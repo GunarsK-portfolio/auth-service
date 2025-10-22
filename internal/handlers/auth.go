@@ -1,3 +1,4 @@
+// Package handlers contains HTTP request handlers for the auth service.
 package handlers
 
 import (
@@ -8,23 +9,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
 	authService service.AuthService
 }
 
+// NewAuthHandler creates a new AuthHandler instance.
 func NewAuthHandler(authService service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
+// LoginRequest represents the login request payload.
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
+// RefreshRequest represents the token refresh request payload.
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+// ValidateRequest represents the token validation request payload.
 type ValidateRequest struct {
 	Token string `json:"token" binding:"required"`
 }

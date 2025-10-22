@@ -27,6 +27,16 @@ coverage.txt
 
 # CI/CD
 .github
+.golangci.yml
+.codecov.yml
 
 # Logs
 *.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/

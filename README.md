@@ -1,5 +1,7 @@
 # Auth Service
 
+![CI](https://github.com/GunarsK-portfolio/auth-service/workflows/CI/badge.svg)
+
 JWT-based authentication service with refresh token support.
 
 ## Features
@@ -91,14 +93,17 @@ go run cmd/api/main.go
 
 Using Task:
 ```bash
-task run           # Run the service
-task build         # Build binary
-task test          # Run tests
-task swagger       # Generate Swagger docs
-task clean         # Clean build artifacts
-task docker-build  # Build Docker image
-task docker-run    # Run with docker-compose
-task docker-logs   # View logs
+task run            # Run the service
+task build          # Build binary
+task test           # Run tests
+task test-coverage  # Run tests with coverage report
+task lint           # Run golangci-lint
+task vuln           # Check for vulnerabilities
+task ci             # Run all CI checks locally
+task swagger        # Generate Swagger docs
+task clean          # Clean build artifacts
+task docker-build   # Build Docker image
+task install-tools  # Install dev tools (golangci-lint, govulncheck, etc.)
 ```
 
 Using Go directly:
