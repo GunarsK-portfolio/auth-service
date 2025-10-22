@@ -3,20 +3,8 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'Dockerfile'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main, develop ]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'Dockerfile'
-      - '.github/workflows/ci.yml'
   workflow_dispatch: # Allow manual trigger
 
 env:
