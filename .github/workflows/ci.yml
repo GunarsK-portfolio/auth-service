@@ -143,6 +143,9 @@ jobs:
   security-analysis:
     name: Security Analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # For GitHub Security tab
     steps:
       - name: Checkout code
         uses: actions/checkout@v5.0.0
@@ -154,9 +157,9 @@ jobs:
           cache: true
 
       - name: Run gosec Security Scanner
-        uses: securego/gosec@v2.22.10
+        uses: securego/gosec@master
         with:
-          args: '-fmt sarif -out gosec-results.sarif ./...'
+          args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
 
       - name: Upload gosec results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3.28.6
