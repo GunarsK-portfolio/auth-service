@@ -9,18 +9,7 @@ on:
 
 env:
   GO_VERSION: '1.25.2'
-  # Action versions - update in one place
-  ACTIONS_CHECKOUT: 'actions/checkout@v5.0.0'
-  ACTIONS_SETUP_GO: 'actions/setup-go@v6.0.0'
-  ACTIONS_UPLOAD_ARTIFACT: 'actions/upload-artifact@v4.6.2'
-  GOLANGCI_LINT_ACTION: 'golangci/golangci-lint-action@v8.0.0'
   GOLANGCI_LINT_VERSION: 'v2.5.0'
-  CODECOV_ACTION: 'codecov/codecov-action@v5.5.1'
-  DOCKER_SETUP_BUILDX: 'docker/setup-buildx-action@v3.11.1'
-  DOCKER_BUILD_PUSH: 'docker/build-push-action@v6.18.0'
-  AQUASECURITY_TRIVY: 'aquasecurity/trivy-action@0.33.1'
-  GITHUB_CODEQL_UPLOAD: 'github/codeql-action/upload-sarif@v3.28.6'
-  SECUREGO_GOSEC: 'securego/gosec@v2.22.10'
 
 jobs:
   # Job 1: Lint Go code
@@ -29,16 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Setup Go
-        uses: ${{ env.ACTIONS_SETUP_GO }}
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: golangci-lint
-        uses: ${{ env.GOLANGCI_LINT_ACTION }}
+        uses: golangci/golangci-lint-action@v8.0.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m --verbose
@@ -51,10 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Setup Go
-        uses: ${{ env.ACTIONS_SETUP_GO }}
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -69,7 +58,7 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage to Codecov (optional)
-        uses: ${{ env.CODECOV_ACTION }}
+        uses: codecov/codecov-action@v5.5.1
         if: github.event_name == 'push'
         with:
           file: ./coverage.out
@@ -77,7 +66,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload coverage artifact
-        uses: ${{ env.ACTIONS_UPLOAD_ARTIFACT }}
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: coverage-report
           path: coverage.html
@@ -89,10 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Setup Go
-        uses: ${{ env.ACTIONS_SETUP_GO }}
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -112,13 +101,13 @@ jobs:
       security-events: write # For GitHub Security tab
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Set up Docker Buildx
-        uses: ${{ env.DOCKER_SETUP_BUILDX }}
+        uses: docker/setup-buildx-action@v3.11.1
 
       - name: Build Docker image
-        uses: ${{ env.DOCKER_BUILD_PUSH }}
+        uses: docker/build-push-action@v6.18.0
         with:
           context: .
           push: false
@@ -128,7 +117,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
-        uses: ${{ env.AQUASECURITY_TRIVY }}
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: auth-service:${{ github.sha }}
           format: 'sarif'
@@ -137,13 +126,13 @@ jobs:
           exit-code: '1' # Fail on CRITICAL/HIGH vulnerabilities
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: ${{ env.GITHUB_CODEQL_UPLOAD }}
+        uses: github/codeql-action/upload-sarif@v3.28.6
         if: always() # Upload even if scan fails
         with:
           sarif_file: 'trivy-results.sarif'
 
       - name: Run Trivy vulnerability scanner (table output)
-        uses: ${{ env.AQUASECURITY_TRIVY }}
+        uses: aquasecurity/trivy-action@0.33.1
         if: always()
         with:
           image-ref: auth-service:${{ github.sha }}
@@ -156,21 +145,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Setup Go
-        uses: ${{ env.ACTIONS_SETUP_GO }}
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Run gosec Security Scanner
-        uses: ${{ env.SECUREGO_GOSEC }}
+        uses: securego/gosec@v2.22.10
         with:
           args: '-fmt sarif -out gosec-results.sarif ./...'
 
       - name: Upload gosec results to GitHub Security tab
-        uses: ${{ env.GITHUB_CODEQL_UPLOAD }}
+        uses: github/codeql-action/upload-sarif@v3.28.6
         if: always()
         with:
           sarif_file: 'gosec-results.sarif'
@@ -181,10 +170,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: ${{ env.ACTIONS_CHECKOUT }}
+        uses: actions/checkout@v5.0.0
 
       - name: Setup Go
-        uses: ${{ env.ACTIONS_SETUP_GO }}
+        uses: actions/setup-go@v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
