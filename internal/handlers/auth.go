@@ -112,14 +112,20 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// ValidateResponse represents the token validation response.
+type ValidateResponse struct {
+	Valid      bool  `json:"valid"`
+	TTLSeconds int64 `json:"ttl_seconds"`
+}
+
 // Validate godoc
 // @Summary Validate access token
-// @Description Validate if access token is valid
+// @Description Validate if access token is valid and return TTL
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body ValidateRequest true "Access token"
-// @Success 200 {object} map[string]bool
+// @Success 200 {object} ValidateResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/validate [post]
@@ -130,13 +136,50 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 		return
 	}
 
-	valid, err := h.authService.ValidateToken(req.Token)
-	if err != nil || !valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"valid": false})
+	ttl, err := h.authService.ValidateToken(req.Token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, ValidateResponse{Valid: false})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"valid": true})
+	c.JSON(http.StatusOK, ValidateResponse{
+		Valid:      true,
+		TTLSeconds: ttl,
+	})
+}
+
+// TokenStatusResponse represents the token status response.
+type TokenStatusResponse struct {
+	Valid      bool  `json:"valid"`
+	TTLSeconds int64 `json:"ttl_seconds"`
+}
+
+// TokenStatus godoc
+// @Summary Check token status
+// @Description Check if token is valid and return remaining TTL (reads from Authorization header)
+// @Tags auth
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} TokenStatusResponse
+// @Failure 401 {object} TokenStatusResponse
+// @Router /auth/token-status [get]
+func (h *AuthHandler) TokenStatus(c *gin.Context) {
+	token := extractToken(c)
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, TokenStatusResponse{Valid: false, TTLSeconds: 0})
+		return
+	}
+
+	ttl, err := h.authService.ValidateToken(token)
+	if err != nil || ttl <= 0 {
+		c.JSON(http.StatusUnauthorized, TokenStatusResponse{Valid: false, TTLSeconds: 0})
+		return
+	}
+
+	c.JSON(http.StatusOK, TokenStatusResponse{
+		Valid:      true,
+		TTLSeconds: ttl,
+	})
 }
 
 func extractToken(c *gin.Context) string {

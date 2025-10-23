@@ -153,9 +153,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/token-status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Check if token is valid and return remaining TTL (reads from Authorization header)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Check token status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.TokenStatusResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.TokenStatusResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/validate": {
             "post": {
-                "description": "Validate if access token is valid",
+                "description": "Validate if access token is valid and return TTL",
                 "consumes": [
                     "application/json"
                 ],
@@ -181,10 +212,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "boolean"
-                            }
+                            "$ref": "#/definitions/handlers.ValidateResponse"
                         }
                     },
                     "400": {
@@ -259,6 +287,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.TokenStatusResponse": {
+            "type": "object",
+            "properties": {
+                "ttl_seconds": {
+                    "type": "integer"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.ValidateRequest": {
             "type": "object",
             "required": [
@@ -267,6 +306,17 @@ const docTemplate = `{
             "properties": {
                 "token": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.ValidateResponse": {
+            "type": "object",
+            "properties": {
+                "ttl_seconds": {
+                    "type": "integer"
+                },
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },
@@ -283,6 +333,14 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Type \"Bearer\" followed by a space and JWT token.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }`
