@@ -1,6 +1,8 @@
 # Auth Service
 
 ![CI](https://github.com/GunarsK-portfolio/auth-service/workflows/CI/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/GunarsK-portfolio/auth-service)](https://goreportcard.com/report/github.com/GunarsK-portfolio/auth-service)
+[![codecov](https://codecov.io/gh/GunarsK-portfolio/auth-service/branch/main/graph/badge.svg)](https://codecov.io/gh/GunarsK-portfolio/auth-service)
 
 JWT-based authentication service with refresh token support.
 
