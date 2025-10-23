@@ -32,6 +32,7 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler 
 		v1.POST("/logout", authHandler.Logout)
 		v1.POST("/refresh", authHandler.Refresh)
 		v1.POST("/validate", authHandler.Validate)
+		v1.GET("/token-status", authHandler.TokenStatus)
 	}
 
 	// Swagger documentation

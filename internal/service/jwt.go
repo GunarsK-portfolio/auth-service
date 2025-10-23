@@ -19,6 +19,8 @@ type JWTService interface {
 	GenerateAccessToken(userID int64, username string) (string, error)
 	GenerateRefreshToken(userID int64, username string) (string, error)
 	ValidateToken(tokenString string) (*Claims, error)
+	GetAccessExpiry() time.Duration
+	GetRefreshExpiry() time.Duration
 }
 
 type jwtService struct {
@@ -75,4 +77,12 @@ func (s *jwtService) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, errors.New("invalid token")
+}
+
+func (s *jwtService) GetAccessExpiry() time.Duration {
+	return s.accessExpiry
+}
+
+func (s *jwtService) GetRefreshExpiry() time.Duration {
+	return s.refreshExpiry
 }

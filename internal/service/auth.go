@@ -37,7 +37,7 @@ type AuthService interface {
 	Login(username, password string) (*LoginResponse, error)
 	Logout(token string) error
 	RefreshToken(refreshToken string) (*LoginResponse, error)
-	ValidateToken(token string) (bool, error)
+	ValidateToken(token string) (int64, error)
 }
 
 type authService struct {
@@ -75,14 +75,14 @@ func (s *authService) Login(username, password string) (*LoginResponse, error) {
 		return nil, err
 	}
 
-	// Store refresh token in Redis
+	// Store refresh token in Redis with same expiry as JWT refresh token
 	ctx := context.Background()
-	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, 7*24*time.Hour)
+	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, s.jwtService.GetRefreshExpiry())
 
 	return &LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresIn:    900, // 15 minutes in seconds
+		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
 	}, nil
 }
 
@@ -123,17 +123,27 @@ func (s *authService) RefreshToken(refreshToken string) (*LoginResponse, error) 
 		return nil, err
 	}
 
-	// Update refresh token in Redis
-	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, 7*24*time.Hour)
+	// Update refresh token in Redis with same expiry as JWT refresh token
+	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, s.jwtService.GetRefreshExpiry())
 
 	return &LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: newRefreshToken,
-		ExpiresIn:    900,
+		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
 	}, nil
 }
 
-func (s *authService) ValidateToken(token string) (bool, error) {
-	_, err := s.jwtService.ValidateToken(token)
-	return err == nil, err
+func (s *authService) ValidateToken(token string) (int64, error) {
+	claims, err := s.jwtService.ValidateToken(token)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate TTL from expiry time
+	ttl := int64(claims.ExpiresAt.Time.Sub(time.Now()).Seconds())
+	if ttl < 0 {
+		ttl = 0
+	}
+
+	return ttl, nil
 }

@@ -17,12 +17,26 @@ definitions:
     required:
     - refresh_token
     type: object
+  handlers.TokenStatusResponse:
+    properties:
+      ttl_seconds:
+        type: integer
+      valid:
+        type: boolean
+    type: object
   handlers.ValidateRequest:
     properties:
       token:
         type: string
     required:
     - token
+    type: object
+  handlers.ValidateResponse:
+    properties:
+      ttl_seconds:
+        type: integer
+      valid:
+        type: boolean
     type: object
   service.LoginResponse:
     properties:
@@ -129,11 +143,31 @@ paths:
       summary: Refresh access token
       tags:
       - auth
+  /auth/token-status:
+    get:
+      description: Check if token is valid and return remaining TTL (reads from Authorization
+        header)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.TokenStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.TokenStatusResponse'
+      security:
+      - BearerAuth: []
+      summary: Check token status
+      tags:
+      - auth
   /auth/validate:
     post:
       consumes:
       - application/json
-      description: Validate if access token is valid
+      description: Validate if access token is valid and return TTL
       parameters:
       - description: Access token
         in: body
@@ -147,9 +181,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: boolean
-            type: object
+            $ref: '#/definitions/handlers.ValidateResponse'
         "400":
           description: Bad Request
           schema:
@@ -180,4 +212,10 @@ paths:
       summary: Health check
       tags:
       - health
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"
