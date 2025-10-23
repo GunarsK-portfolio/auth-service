@@ -140,7 +140,7 @@ func (s *authService) ValidateToken(token string) (int64, error) {
 	}
 
 	// Calculate TTL from expiry time
-	ttl := int64(claims.ExpiresAt.Time.Sub(time.Now()).Seconds())
+	ttl := int64(time.Until(claims.ExpiresAt.Time).Seconds())
 	if ttl < 0 {
 		ttl = 0
 	}
