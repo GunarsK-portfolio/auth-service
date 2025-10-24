@@ -14,6 +14,8 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
 	"github.com/GunarsK-portfolio/auth-service/pkg/redis"
 	commondb "github.com/GunarsK-portfolio/portfolio-common/database"
+	"github.com/GunarsK-portfolio/portfolio-common/logger"
+	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,6 +32,22 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Initialize structured logger
+	appLogger := logger.New(logger.Config{
+		Level:       os.Getenv("LOG_LEVEL"),  // debug, info, warn, error
+		Format:      os.Getenv("LOG_FORMAT"), // json, text (default: json)
+		ServiceName: "auth-service",
+		AddSource:   os.Getenv("LOG_SOURCE") == "true", // Add file:line to logs
+	})
+
+	appLogger.Info("Starting auth service", "version", "1.0")
+
+	// Initialize Prometheus metrics
+	metricsCollector := metrics.New(metrics.Config{
+		ServiceName: "auth",
+		Namespace:   "portfolio",
+	})
+
 	// Initialize database
 	db, err := commondb.Connect(commondb.PostgresConfig{
 		Host:     cfg.DBHost,
@@ -41,11 +59,14 @@ func main() {
 		TimeZone: "UTC",
 	})
 	if err != nil {
+		appLogger.Error("Failed to connect to database", "error", err)
 		log.Fatal("Failed to connect to database:", err)
 	}
+	appLogger.Info("Database connection established")
 
 	// Initialize Redis
 	redisClient := redis.NewClient(cfg)
+	appLogger.Info("Redis connection established")
 
 	// Initialize repository
 	userRepo := repository.NewUserRepository(db)
@@ -58,11 +79,16 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService)
 	healthHandler := handlers.NewHealthHandler()
 
-	// Setup router
-	router := gin.Default()
+	// Setup router with custom middleware
+	router := gin.New()
+
+	// Add custom middleware
+	router.Use(logger.Recovery(appLogger))      // Panic recovery with logging
+	router.Use(logger.RequestLogger(appLogger)) // Request logging with context
+	router.Use(metricsCollector.Middleware())   // Prometheus metrics collection
 
 	// Setup routes
-	routes.Setup(router, authHandler, healthHandler)
+	routes.Setup(router, authHandler, healthHandler, metricsCollector)
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -70,8 +96,9 @@ func main() {
 		port = "8084"
 	}
 
-	log.Printf("Starting auth service on port %s", port)
+	appLogger.Info("Auth service ready", "port", port, "environment", os.Getenv("ENVIRONMENT"))
 	if err := router.Run(fmt.Sprintf(":%s", port)); err != nil {
+		appLogger.Error("Failed to start server", "error", err)
 		log.Fatal("Failed to start server:", err)
 	}
 }

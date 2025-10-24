@@ -3,13 +3,15 @@ package routes
 
 import (
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
+	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // Setup configures all HTTP routes for the application.
-func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler) {
+func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, metricsCollector *metrics.Metrics) {
 	// Enable CORS
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -23,7 +25,9 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler 
 	})
 
 	// Health check
-	router.GET("/api/v1/health", healthHandler.Check)
+	router.GET("/health", healthHandler.Check)
+	// Metrics
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Auth routes
 	v1 := router.Group("/api/v1/auth")
