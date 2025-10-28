@@ -86,8 +86,6 @@ docker-compose up -d postgres redis flyway
 
 4. Run the service:
 ```bash
-task run
-# or
 go run cmd/api/main.go
 ```
 
@@ -95,24 +93,41 @@ go run cmd/api/main.go
 
 Using Task:
 ```bash
-task run            # Run the service
-task build          # Build binary
-task test           # Run tests
-task test-coverage  # Run tests with coverage report
-task lint           # Run golangci-lint
-task vuln           # Check for vulnerabilities
-task ci             # Run all CI checks locally
-task swagger        # Generate Swagger docs
-task clean          # Clean build artifacts
-task docker-build   # Build Docker image
-task install-tools  # Install dev tools (golangci-lint, govulncheck, etc.)
+# Development
+task dev:swagger         # Generate Swagger documentation
+task dev:install-tools   # Install dev tools (golangci-lint, govulncheck, etc.)
+
+# Build and run
+task build               # Build binary
+task test                # Run tests
+task test:coverage       # Run tests with coverage report
+task clean               # Clean build artifacts
+
+# Code quality
+task format              # Format code with gofmt
+task tidy                # Tidy and verify go.mod
+task lint                # Run golangci-lint
+task vet                 # Run go vet
+
+# Security
+task security:scan       # Run gosec security scanner
+task security:vuln       # Check for vulnerabilities with govulncheck
+
+# Docker
+task docker:build        # Build Docker image
+task docker:run          # Run service in Docker container
+task docker:stop         # Stop running Docker container
+task docker:logs         # View Docker container logs
+
+# CI/CD
+task ci:all              # Run all CI checks (format, tidy, lint, vet, test, vuln)
 ```
 
 Using Go directly:
 ```bash
-go run cmd/api/main.go       # Run
-go build -o bin/auth cmd/api/main.go  # Build
-go test ./...                # Test
+go run cmd/api/main.go                   # Run
+go build -o bin/auth cmd/api/main.go     # Build
+go test ./...                             # Test
 ```
 
 ## API Endpoints
