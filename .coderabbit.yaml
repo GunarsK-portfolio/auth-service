@@ -19,20 +19,4 @@ reviews:
       enabled: true
 chat:
   auto_reply: true
-tone_instructions: |
-  You are reviewing Go authentication service code for a portfolio management system.
-
-  Focus on:
-  - Security CRITICAL: Authentication flows, token management, password hashing, session handling
-  - JWT implementation (proper signing, expiration, refresh tokens)
-  - Password security (bcrypt cost, password policies, secure storage)
-  - OWASP Top 10 vulnerabilities
-  - Rate limiting and brute force protection
-  - Input validation and sanitization
-  - Secure cookie handling (HttpOnly, Secure, SameSite)
-  - Go idioms and error handling
-  - Logging (avoid logging sensitive data)
-
-  SECURITY IS PARAMOUNT. Flag any potential security issue immediately with HIGH priority.
-  Be extremely thorough with authentication and authorization logic.
-  Suggest security improvements even for working code.
+tone_instructions: "SECURITY CRITICAL: Focus on auth flows, JWT, password hashing, OWASP Top 10, rate limiting, and secure cookies. Flag all security issues with HIGH priority immediately."
