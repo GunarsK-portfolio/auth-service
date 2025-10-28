@@ -31,7 +31,7 @@ JWT-based authentication service with refresh token support.
 
 ## Project Structure
 
-```
+```text
 auth-service/
 ├── cmd/
 │   └── api/              # Application entrypoint
@@ -59,11 +59,13 @@ docker-compose up -d
 ### Local Development
 
 1. Copy environment file:
+
 ```bash
 cp .env.example .env
 ```
 
-2. Update `.env` with your configuration:
+1. Update `.env` with your configuration:
+
 ```env
 PORT=8084
 DB_HOST=localhost
@@ -78,41 +80,61 @@ JWT_ACCESS_EXPIRY=15m
 JWT_REFRESH_EXPIRY=168h
 ```
 
-3. Start infrastructure (if not running):
+1. Start infrastructure (if not running):
+
 ```bash
 # From infrastructure directory
 docker-compose up -d postgres redis flyway
 ```
 
-4. Run the service:
+1. Run the service:
+
 ```bash
-task run
-# or
 go run cmd/api/main.go
 ```
 
 ## Available Commands
 
 Using Task:
+
 ```bash
-task run            # Run the service
-task build          # Build binary
-task test           # Run tests
-task test-coverage  # Run tests with coverage report
-task lint           # Run golangci-lint
-task vuln           # Check for vulnerabilities
-task ci             # Run all CI checks locally
-task swagger        # Generate Swagger docs
-task clean          # Clean build artifacts
-task docker-build   # Build Docker image
-task install-tools  # Install dev tools (golangci-lint, govulncheck, etc.)
+# Development
+task dev:swagger         # Generate Swagger documentation
+task dev:install-tools   # Install dev tools (golangci-lint, govulncheck, etc.)
+
+# Build and run
+task build               # Build binary
+task test                # Run tests
+task test:coverage       # Run tests with coverage report
+task clean               # Clean build artifacts
+
+# Code quality
+task format              # Format code with gofmt
+task tidy                # Tidy and verify go.mod
+task lint                # Run golangci-lint
+task vet                 # Run go vet
+
+# Security
+task security:scan       # Run gosec security scanner
+task security:vuln       # Check for vulnerabilities with govulncheck
+
+# Docker
+task docker:build        # Build Docker image
+task docker:run          # Run service in Docker container
+task docker:stop         # Stop running Docker container
+task docker:logs         # View Docker container logs
+
+# CI/CD
+task ci:all              # Run all CI checks (format, tidy, lint, vet,
+                         # test, vuln)
 ```
 
 Using Go directly:
+
 ```bash
-go run cmd/api/main.go       # Run
-go build -o bin/auth cmd/api/main.go  # Build
-go test ./...                # Test
+go run cmd/api/main.go                   # Run
+go build -o bin/auth cmd/api/main.go     # Build
+go test ./...                             # Test
 ```
 
 ## API Endpoints
@@ -120,9 +142,11 @@ go test ./...                # Test
 Base URL: `http://localhost:8084/api/v1/auth`
 
 ### Health Check
+
 - `GET /health` - Service health status
 
 ### Authentication
+
 - `POST /register` - Register new user
 - `POST /login` - Login and receive tokens
 - `POST /refresh` - Refresh access token
@@ -151,6 +175,7 @@ curl -X POST http://localhost:8084/api/v1/auth/login \
 ```
 
 Response:
+
 ```json
 {
   "access_token": "eyJhbGc...",
@@ -162,6 +187,7 @@ Response:
 ## Swagger Documentation
 
 When running, Swagger UI is available at:
+
 - `http://localhost:8084/swagger/index.html`
 
 ## Environment Variables
@@ -208,7 +234,8 @@ go build -o bin/auth cmd/api/main.go
 
 ## Integration
 
-This service is used by the admin-api for authentication. Protected endpoints in admin-api validate JWT tokens issued by this service.
+This service is used by the admin-api for authentication. Protected
+endpoints in admin-api validate JWT tokens issued by this service.
 
 ## License
 
