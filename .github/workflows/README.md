@@ -5,6 +5,7 @@
 ### CI Pipeline (`ci.yml`)
 
 Comprehensive continuous integration pipeline that runs on:
+
 - Pull requests to `main` or `develop`
 - Pushes to `main` or `develop`
 - Manual workflow dispatch
@@ -19,6 +20,7 @@ Comprehensive continuous integration pipeline that runs on:
 6. **Code Quality** - Format checks, go vet, and ineffassign detection
 
 **Security Features:**
+
 - Results uploaded to GitHub Security tab (SARIF format)
 - Fails on CRITICAL/HIGH vulnerabilities
 - Codecov integration for coverage tracking
