@@ -38,3 +38,4 @@ Thumbs.db
 *.log
 __debug_bin*
 .golangci.bck.yml
+node_modules/
