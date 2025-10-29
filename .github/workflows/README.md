@@ -37,31 +37,16 @@ Add these to your README.md:
 
 ## Local Testing
 
-Run the same checks locally before pushing:
+Using Task:
 
 ```bash
-# Install tools
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-go install golang.org/x/vuln/cmd/govulncheck@latest
-go install github.com/securego/gosec/v2/cmd/gosec@latest
-
-# Run linter
-golangci-lint run
-
-# Run tests with coverage
-go test -v -race -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-
-# Check for vulnerabilities
-govulncheck ./...
-
-# Security scan
-gosec ./...
-
-# Check formatting
-gofmt -l .
-go vet ./...
-go mod tidy
+task format            # Format code
+task test              # Run tests
+task test:coverage     # Run tests with coverage report
+task lint              # Run golangci-lint
+task security:vuln     # Check for vulnerabilities
+task ci:all            # Run all CI checks
+task dev:install-tools # Install dev tools (golangci-lint, govulncheck, etc.)
 ```
 
 ## Configuration Files

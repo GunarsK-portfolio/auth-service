@@ -26,6 +26,7 @@ JWT-based authentication service with refresh token support.
 ## Prerequisites
 
 - Go 1.25+
+- Node.js 22+ and npm 11+
 - PostgreSQL (or use Docker Compose)
 - Redis (or use Docker Compose)
 
