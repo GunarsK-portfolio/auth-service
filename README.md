@@ -17,7 +17,7 @@ JWT-based authentication service with refresh token support.
 
 ## Tech Stack
 
-- **Language**: Go 1.25
+- **Language**: Go 1.25.3
 - **Framework**: Gin
 - **Database**: PostgreSQL (GORM)
 - **Cache**: Redis
