@@ -16,6 +16,7 @@ type Config struct {
 	DBName           string
 	RedisHost        string
 	RedisPort        string
+	RedisPassword    string
 	JWTSecret        string
 	JWTAccessExpiry  time.Duration
 	JWTRefreshExpiry time.Duration
@@ -32,6 +33,7 @@ func Load() *Config {
 		DBName:           common.GetEnvRequired("DB_NAME"),
 		RedisHost:        common.GetEnvRequired("REDIS_HOST"),
 		RedisPort:        common.GetEnvRequired("REDIS_PORT"),
+		RedisPassword:    common.GetEnvRequired("REDIS_PASSWORD"),
 		JWTSecret:        common.GetEnvRequired("JWT_SECRET"),
 		JWTAccessExpiry:  parseDuration(common.GetEnv("JWT_ACCESS_EXPIRY", "15m"), 15*time.Minute),
 		JWTRefreshExpiry: parseDuration(common.GetEnv("JWT_REFRESH_EXPIRY", "168h"), 168*time.Hour),

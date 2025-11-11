@@ -76,6 +76,7 @@ DB_PASSWORD=portfolio_pass
 DB_NAME=portfolio
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=redis_dev_pass
 JWT_SECRET=your-secret-key-change-in-production
 JWT_ACCESS_EXPIRY=15m
 JWT_REFRESH_EXPIRY=168h
@@ -203,6 +204,7 @@ When running, Swagger UI is available at:
 | `DB_NAME` | Database name | `portfolio` |
 | `REDIS_HOST` | Redis host | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
+| `REDIS_PASSWORD` | Redis password | `redis_dev_pass` |
 | `JWT_SECRET` | JWT signing secret | **required** |
 | `JWT_ACCESS_EXPIRY` | Access token expiry | `15m` |
 | `JWT_REFRESH_EXPIRY` | Refresh token expiry | `168h` |
