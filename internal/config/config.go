@@ -2,31 +2,34 @@
 package config
 
 import (
+	"fmt"
 	"time"
+
+	"github.com/go-playground/validator/v10"
 
 	common "github.com/GunarsK-portfolio/portfolio-common/config"
 )
 
 // Config holds all configuration for the auth service.
 type Config struct {
-	DBHost           string
-	DBPort           string
-	DBUser           string
-	DBPassword       string
-	DBName           string
-	RedisHost        string
-	RedisPort        string
-	RedisPassword    string
-	JWTSecret        string
-	JWTAccessExpiry  time.Duration
-	JWTRefreshExpiry time.Duration
-	Port             string
-	Environment      string
+	DBHost           string        `validate:"required"`
+	DBPort           string        `validate:"required,number,min=1,max=65535"`
+	DBUser           string        `validate:"required"`
+	DBPassword       string        `validate:"required"`
+	DBName           string        `validate:"required"`
+	RedisHost        string        `validate:"required"`
+	RedisPort        string        `validate:"required,number,min=1,max=65535"`
+	RedisPassword    string        // Optional, no validation
+	JWTSecret        string        `validate:"required,min=32"`
+	JWTAccessExpiry  time.Duration `validate:"gt=0"`
+	JWTRefreshExpiry time.Duration `validate:"gt=0"`
+	Port             string        `validate:"required,number,min=1,max=65535"`
+	Environment      string        `validate:"oneof=development staging production"`
 }
 
 // Load reads configuration from environment variables.
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		DBHost:           common.GetEnvRequired("DB_HOST"),
 		DBPort:           common.GetEnvRequired("DB_PORT"),
 		DBUser:           common.GetEnvRequired("DB_USER"),
@@ -41,6 +44,14 @@ func Load() *Config {
 		Port:             common.GetEnv("PORT", "8084"),
 		Environment:      common.GetEnv("ENVIRONMENT", "development"),
 	}
+
+	// Validate configuration
+	validate := validator.New()
+	if err := validate.Struct(cfg); err != nil {
+		panic(fmt.Sprintf("Invalid configuration: %v", err))
+	}
+
+	return cfg
 }
 
 func parseDuration(value string, defaultValue time.Duration) time.Duration {
