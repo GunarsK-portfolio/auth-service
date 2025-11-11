@@ -18,10 +18,13 @@ func NewClient(cfg *config.Config) *redis.Client {
 		DB:       0,
 	}
 
-	// Enable TLS for production environments when password is set
-	if cfg.RedisPassword != "" {
+	// Enable TLS for production environments
+	// Development: no TLS (localhost connections)
+	// Production: TLS with proper certificate verification
+	if cfg.Environment == "production" {
 		options.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
+			ServerName: cfg.RedisHost,
 		}
 	}
 

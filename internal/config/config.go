@@ -21,6 +21,7 @@ type Config struct {
 	JWTAccessExpiry  time.Duration
 	JWTRefreshExpiry time.Duration
 	Port             string
+	Environment      string
 }
 
 // Load reads configuration from environment variables.
@@ -38,6 +39,7 @@ func Load() *Config {
 		JWTAccessExpiry:  parseDuration(common.GetEnv("JWT_ACCESS_EXPIRY", "15m"), 15*time.Minute),
 		JWTRefreshExpiry: parseDuration(common.GetEnv("JWT_REFRESH_EXPIRY", "168h"), 168*time.Hour),
 		Port:             common.GetEnv("PORT", "8084"),
+		Environment:      common.GetEnv("ENVIRONMENT", "development"),
 	}
 }
 
