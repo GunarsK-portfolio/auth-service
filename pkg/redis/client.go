@@ -11,20 +11,22 @@ import (
 )
 
 // NewClient creates a new Redis client instance.
+//
+//nolint:staticcheck // Embedded field names required due to ambiguous fields
 func NewClient(cfg *config.Config) *redis.Client {
 	options := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
-		Password: cfg.RedisPassword,
+		Addr:     fmt.Sprintf("%s:%s", cfg.RedisConfig.Host, cfg.RedisConfig.Port),
+		Password: cfg.RedisConfig.Password,
 		DB:       0,
 	}
 
 	// Enable TLS for production environments
 	// Development: no TLS (localhost connections)
 	// Production: TLS with proper certificate verification
-	if cfg.Environment == "production" {
+	if cfg.ServiceConfig.Environment == "production" {
 		options.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
-			ServerName: cfg.RedisHost,
+			ServerName: cfg.RedisConfig.Host,
 		}
 	}
 

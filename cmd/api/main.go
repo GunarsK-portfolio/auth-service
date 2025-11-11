@@ -49,12 +49,13 @@ func main() {
 	})
 
 	// Initialize database
+	//nolint:staticcheck // Embedded field name required due to ambiguous fields (DatabaseConfig.Host vs RedisConfig.Host)
 	db, err := commondb.Connect(commondb.PostgresConfig{
-		Host:     cfg.DBHost,
-		Port:     cfg.DBPort,
-		User:     cfg.DBUser,
-		Password: cfg.DBPassword,
-		DBName:   cfg.DBName,
+		Host:     cfg.DatabaseConfig.Host,
+		Port:     cfg.DatabaseConfig.Port,
+		User:     cfg.DatabaseConfig.User,
+		Password: cfg.DatabaseConfig.Password,
+		DBName:   cfg.DatabaseConfig.Name,
 		SSLMode:  "disable",
 		TimeZone: "UTC",
 	})
@@ -72,7 +73,8 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 
 	// Initialize services
-	jwtService := service.NewJWTService(cfg.JWTSecret, cfg.JWTAccessExpiry, cfg.JWTRefreshExpiry)
+	//nolint:staticcheck // Embedded field name required for clarity
+	jwtService := service.NewJWTService(cfg.JWTConfig.Secret, cfg.JWTConfig.AccessExpiry, cfg.JWTConfig.RefreshExpiry)
 	authService := service.NewAuthService(userRepo, jwtService, redisClient)
 
 	// Initialize handlers
