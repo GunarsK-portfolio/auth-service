@@ -3,6 +3,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
@@ -11,10 +12,23 @@ import (
 
 // NewClient creates a new Redis client instance.
 func NewClient(cfg *config.Config) *redis.Client {
-	client := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
-		DB:   0,
-	})
+	options := &redis.Options{
+		Addr:     fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
+		Password: cfg.RedisPassword,
+		DB:       0,
+	}
+
+	// Enable TLS for production environments
+	// Development: no TLS (localhost connections)
+	// Production: TLS with proper certificate verification
+	if cfg.Environment == "production" {
+		options.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: cfg.RedisHost,
+		}
+	}
+
+	client := redis.NewClient(options)
 
 	// Test connection
 	ctx := context.Background()

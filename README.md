@@ -76,6 +76,8 @@ DB_PASSWORD=portfolio_pass
 DB_NAME=portfolio
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=
+ENVIRONMENT=development
 JWT_SECRET=your-secret-key-change-in-production
 JWT_ACCESS_EXPIRY=15m
 JWT_REFRESH_EXPIRY=168h
@@ -203,9 +205,24 @@ When running, Swagger UI is available at:
 | `DB_NAME` | Database name | `portfolio` |
 | `REDIS_HOST` | Redis host | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
+| `REDIS_PASSWORD` | Redis password (optional) | `""` (empty) |
+| `ENVIRONMENT` | Environment type | `development` |
 | `JWT_SECRET` | JWT signing secret | **required** |
 | `JWT_ACCESS_EXPIRY` | Access token expiry | `15m` |
 | `JWT_REFRESH_EXPIRY` | Refresh token expiry | `168h` |
+
+**Note:** `ENVIRONMENT` accepts: `development`, `staging`, `production`
+
+## Security
+
+### Redis TLS
+
+- **Production**: TLS encryption is **enabled** for Redis connections when
+  `ENVIRONMENT=production`
+- **Development/Staging**: TLS is **disabled** for local Redis connections
+
+**Important**: Production Redis servers must support TLS when
+`ENVIRONMENT=production`.
 
 ## Development
 
