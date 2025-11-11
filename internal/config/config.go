@@ -15,10 +15,18 @@ type Config struct {
 
 // Load reads configuration from environment variables.
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		DatabaseConfig: common.NewDatabaseConfig(),
 		ServiceConfig:  common.NewServiceConfig("8084"),
 		RedisConfig:    common.NewRedisConfig(),
 		JWTConfig:      common.NewJWTConfig(),
 	}
+
+	// Defense-in-depth: Explicitly verify JWT secret is configured
+	//nolint:staticcheck // Explicit field access for security clarity
+	if cfg.JWTConfig.Secret == "" {
+		panic("JWT secret must be configured")
+	}
+
+	return cfg
 }
