@@ -90,7 +90,7 @@ func main() {
 	router.Use(metricsCollector.Middleware())   // Prometheus metrics collection
 
 	// Setup routes
-	routes.Setup(router, authHandler, healthHandler, metricsCollector)
+	routes.Setup(router, authHandler, healthHandler, cfg, metricsCollector)
 
 	// Start server
 	port := os.Getenv("PORT")

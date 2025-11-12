@@ -28,6 +28,7 @@ go test -v -run TestLogin ./internal/service/
 ## Test Files
 
 **`jwt_test.go`** - 28 tests
+
 - Constructor validation (3)
 - Token generation (8)
 - Token validation (9)
@@ -36,6 +37,7 @@ go test -v -run TestLogin ./internal/service/
 - Security testing (signatures, tampering, algorithm confusion)
 
 **`auth_test.go`** - 31 tests
+
 - Login flow (7)
 - Logout flow (4)
 - Token refresh (6)
