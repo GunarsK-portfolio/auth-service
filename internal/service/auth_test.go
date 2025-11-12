@@ -362,13 +362,16 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, _ := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
 
 	// Wait for expiry
 	time.Sleep(shortExpiry + 100*time.Millisecond)
 
 	// Try to logout with expired token
-	err := service.Logout(context.Background(), token)
+	err = service.Logout(context.Background(), token)
 
 	if err == nil {
 		t.Error("Logout() should fail for expired token")
@@ -379,12 +382,15 @@ func TestLogout_RedisFailure(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 
 	// Generate valid token
-	token, _ := service.jwtService.GenerateAccessToken(1, "testuser")
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
 
 	// Close Redis to simulate failure
 	mr.Close()
 
-	err := service.Logout(context.Background(), token)
+	err = service.Logout(context.Background(), token)
 
 	if err == nil {
 		t.Error("Logout() should fail when Redis is unavailable")
@@ -468,7 +474,10 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate refresh token
-	token, _ := jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := jwtService.GenerateRefreshToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
 
 	// Store in Redis
 	_ = mr.Set("refresh_token:1", token)
@@ -477,7 +486,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	time.Sleep(shortExpiry + 100*time.Millisecond)
 
 	// Try to refresh with expired token
-	_, err := service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail for expired token")
@@ -489,9 +498,12 @@ func TestRefreshToken_NotInRedis(t *testing.T) {
 	defer mr.Close()
 
 	// Generate valid token but don't store in Redis
-	token, _ := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
 
-	_, err := service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail if token not in Redis")
@@ -503,14 +515,20 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 	defer mr.Close()
 
 	// Generate two different tokens
-	token1, _ := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token1, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
 	time.Sleep(1001 * time.Millisecond) // Ensure different IssuedAt
-	token2, _ := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token2, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
 
 	// Store token1 in Redis but try to refresh with token2
 	_ = mr.Set("refresh_token:1", token1)
 
-	_, err := service.RefreshToken(context.Background(), token2)
+	_, err = service.RefreshToken(context.Background(), token2)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail if token doesn't match stored token")
@@ -521,13 +539,16 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 
 	// Generate valid token and store in Redis
-	token, _ := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
 	_ = mr.Set("refresh_token:1", token)
 
 	// Close Redis to simulate failure
 	mr.Close()
 
-	_, err := service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail when Redis is unavailable")
@@ -542,7 +563,10 @@ func TestAuthValidateToken_ValidToken(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	token, _ := service.jwtService.GenerateAccessToken(1, "testuser")
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
 
 	ttl, err := service.ValidateToken(token)
 
@@ -583,13 +607,16 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, _ := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
 
 	// Wait for expiry
 	time.Sleep(shortExpiry + 100*time.Millisecond)
 
 	// Validate expired token
-	_, err := service.ValidateToken(token)
+	_, err = service.ValidateToken(token)
 
 	if err == nil {
 		t.Error("ValidateToken() should fail for expired token")
@@ -607,7 +634,10 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, _ := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
 
 	// Wait for most of the expiry
 	time.Sleep(1 * time.Second)
