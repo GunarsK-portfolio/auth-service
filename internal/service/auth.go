@@ -56,7 +56,7 @@ func NewAuthService(userRepo repository.UserRepository, jwtService JWTService, r
 }
 
 func (s *authService) Login(ctx context.Context, username, password string) (*LoginResponse, error) {
-	user, err := s.userRepo.FindByUsername(username)
+	user, err := s.userRepo.FindByUsername(ctx, username)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -76,7 +76,9 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 	}
 
 	// Store refresh token in Redis with same expiry as JWT refresh token
-	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, s.jwtService.GetRefreshExpiry())
+	if err := s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, s.jwtService.GetRefreshExpiry()).Err(); err != nil {
+		return nil, fmt.Errorf("failed to store refresh token: %w", err)
+	}
 
 	return &LoginResponse{
 		AccessToken:  accessToken,
@@ -92,7 +94,9 @@ func (s *authService) Logout(ctx context.Context, token string) error {
 	}
 
 	// Remove refresh token from Redis
-	s.redis.Del(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID))
+	if err := s.redis.Del(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID)).Err(); err != nil {
+		return fmt.Errorf("failed to invalidate refresh token: %w", err)
+	}
 
 	return nil
 }
@@ -121,7 +125,9 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 	}
 
 	// Update refresh token in Redis with same expiry as JWT refresh token
-	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, s.jwtService.GetRefreshExpiry())
+	if err := s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, s.jwtService.GetRefreshExpiry()).Err(); err != nil {
+		return nil, fmt.Errorf("failed to update refresh token: %w", err)
+	}
 
 	return &LoginResponse{
 		AccessToken:  accessToken,
