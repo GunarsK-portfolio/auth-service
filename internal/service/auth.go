@@ -34,9 +34,9 @@ type LoginResponse struct {
 
 // AuthService defines authentication operations.
 type AuthService interface {
-	Login(username, password string) (*LoginResponse, error)
-	Logout(token string) error
-	RefreshToken(refreshToken string) (*LoginResponse, error)
+	Login(ctx context.Context, username, password string) (*LoginResponse, error)
+	Logout(ctx context.Context, token string) error
+	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
 }
 
@@ -55,7 +55,7 @@ func NewAuthService(userRepo repository.UserRepository, jwtService JWTService, r
 	}
 }
 
-func (s *authService) Login(username, password string) (*LoginResponse, error) {
+func (s *authService) Login(ctx context.Context, username, password string) (*LoginResponse, error) {
 	user, err := s.userRepo.FindByUsername(username)
 	if err != nil {
 		return nil, ErrInvalidCredentials
@@ -76,7 +76,6 @@ func (s *authService) Login(username, password string) (*LoginResponse, error) {
 	}
 
 	// Store refresh token in Redis with same expiry as JWT refresh token
-	ctx := context.Background()
 	s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, s.jwtService.GetRefreshExpiry())
 
 	return &LoginResponse{
@@ -86,27 +85,25 @@ func (s *authService) Login(username, password string) (*LoginResponse, error) {
 	}, nil
 }
 
-func (s *authService) Logout(token string) error {
+func (s *authService) Logout(ctx context.Context, token string) error {
 	claims, err := s.jwtService.ValidateToken(token)
 	if err != nil {
 		return err
 	}
 
 	// Remove refresh token from Redis
-	ctx := context.Background()
 	s.redis.Del(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID))
 
 	return nil
 }
 
-func (s *authService) RefreshToken(refreshToken string) (*LoginResponse, error) {
+func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error) {
 	claims, err := s.jwtService.ValidateToken(refreshToken)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
 
 	// Check if refresh token exists in Redis
-	ctx := context.Background()
 	storedToken, err := s.redis.Get(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID)).Result()
 	if err != nil || storedToken != refreshToken {
 		return nil, errors.New("invalid refresh token")
