@@ -36,19 +36,16 @@ func TestNewJWTService(t *testing.T) {
 func TestNewJWTService_EmptySecret(t *testing.T) {
 	service := NewJWTService("", testAccessExpiry, testRefreshExpiry)
 
-	// Should still generate token (though insecure)
-	token, err := service.GenerateAccessToken(1, "testuser")
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
+	if service != nil {
+		t.Error("NewJWTService() should return nil for empty secret")
 	}
+}
 
-	// Should be able to validate with same empty secret
-	claims, err := service.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-	if claims.UserID != 1 {
-		t.Errorf("Claims.UserID = %v, want 1", claims.UserID)
+func TestNewJWTService_ShortSecret(t *testing.T) {
+	service := NewJWTService("short", testAccessExpiry, testRefreshExpiry)
+
+	if service != nil {
+		t.Error("NewJWTService() should return nil for secret less than 32 bytes")
 	}
 }
 
@@ -410,8 +407,8 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 }
 
 func TestValidateToken_InvalidSignature(t *testing.T) {
-	service1 := NewJWTService("secret1", testAccessExpiry, testRefreshExpiry)
-	service2 := NewJWTService("secret2", testAccessExpiry, testRefreshExpiry)
+	service1 := NewJWTService("secret1-at-least-32-chars-long-11111", testAccessExpiry, testRefreshExpiry)
+	service2 := NewJWTService("secret2-at-least-32-chars-long-22222", testAccessExpiry, testRefreshExpiry)
 
 	// Generate token with service1
 	token, err := service1.GenerateAccessToken(1, "testuser")

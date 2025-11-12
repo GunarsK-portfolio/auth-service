@@ -78,7 +78,7 @@ Tests are organized by function with clear section markers in
 | `TestGetExpiryMethods` | Expiry getters |
 | `TestAccessTokenExpiry` | Access expiry accuracy |
 | `TestRefreshTokenExpiry` | Refresh expiry comparison |
-| `TestVeryShortExpiry` | 1ns expiry (JWT precision) |
+| `TestVeryShortExpiry` | 1 nanosecond expiry (JWT precision) |
 | `TestVeryLongExpiry` | 1 year expiry |
 
 ### Concurrency Tests (2 tests)

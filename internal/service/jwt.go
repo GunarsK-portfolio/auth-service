@@ -30,7 +30,11 @@ type jwtService struct {
 }
 
 // NewJWTService creates a new JWTService instance.
+// Returns nil if secret is empty or less than 32 bytes for security.
 func NewJWTService(secret string, accessExpiry, refreshExpiry time.Duration) JWTService {
+	if len(secret) < 32 {
+		return nil
+	}
 	return &jwtService{
 		secret:        secret,
 		accessExpiry:  accessExpiry,
