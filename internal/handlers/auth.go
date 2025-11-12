@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
+	commonHandlers "github.com/GunarsK-portfolio/portfolio-common/handlers"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,13 +50,13 @@ type ValidateRequest struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
 		return
 	}
 
@@ -73,12 +74,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token := extractToken(c)
 	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	if err := h.authService.Logout(c.Request.Context(), token); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "logout failed"})
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
 		return
 	}
 
@@ -99,13 +100,13 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	response, err := h.authService.RefreshToken(c.Request.Context(), req.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
+		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
 		return
 	}
 
@@ -132,7 +133,7 @@ type ValidateResponse struct {
 func (h *AuthHandler) Validate(c *gin.Context) {
 	var req ValidateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
