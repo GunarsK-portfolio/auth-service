@@ -30,6 +30,8 @@ type LoginResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+	UserID       int64  `json:"-"` // Not exposed in JSON, only for internal use
+	Username     string `json:"-"` // Not exposed in JSON, only for internal use
 }
 
 // AuthService defines authentication operations.
@@ -38,6 +40,7 @@ type AuthService interface {
 	Logout(ctx context.Context, token string) error
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
+	ValidateTokenWithClaims(token string) (int64, *Claims, error)
 }
 
 type authService struct {
@@ -84,6 +87,8 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
+		UserID:       user.ID,
+		Username:     user.Username,
 	}, nil
 }
 
@@ -149,4 +154,19 @@ func (s *authService) ValidateToken(token string) (int64, error) {
 	}
 
 	return ttl, nil
+}
+
+func (s *authService) ValidateTokenWithClaims(token string) (int64, *Claims, error) {
+	claims, err := s.jwtService.ValidateToken(token)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Calculate TTL from expiry time
+	ttl := int64(time.Until(claims.ExpiresAt.Time).Seconds())
+	if ttl < 0 {
+		ttl = 0
+	}
+
+	return ttl, claims, nil
 }
