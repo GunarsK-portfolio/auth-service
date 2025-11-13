@@ -6,18 +6,24 @@ import (
 	"strings"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
+	"github.com/GunarsK-portfolio/portfolio-common/audit"
 	commonHandlers "github.com/GunarsK-portfolio/portfolio-common/handlers"
+	"github.com/GunarsK-portfolio/portfolio-common/repository"
 	"github.com/gin-gonic/gin"
 )
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
-	authService service.AuthService
+	authService   service.AuthService
+	actionLogRepo repository.ActionLogRepository
 }
 
 // NewAuthHandler creates a new AuthHandler instance.
-func NewAuthHandler(authService service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService service.AuthService, actionLogRepo repository.ActionLogRepository) *AuthHandler {
+	return &AuthHandler{
+		authService:   authService,
+		actionLogRepo: actionLogRepo,
+	}
 }
 
 // LoginRequest represents the login request payload.
@@ -56,9 +62,21 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
+		// Log failed login attempt
+		source := "auth-service"
+		_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
+			"username": req.Username,
+			"reason":   "invalid_credentials",
+		})
 		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
 		return
 	}
+
+	// Log successful login with explicit user_id
+	source := "auth-service"
+	_ = audit.LogAction(c, h.actionLogRepo, audit.ActionLoginSuccess, nil, nil, &response.UserID, &source, map[string]interface{}{
+		"username": response.Username,
+	})
 
 	c.JSON(http.StatusOK, response)
 }
@@ -82,6 +100,10 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
 		return
 	}
+
+	// Log logout (user_id automatically extracted from context by auth middleware)
+	source := "auth-service"
+	_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLogout, nil, nil, &source, nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }
@@ -110,18 +132,24 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	// Log token refresh
+	source := "auth-service"
+	_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionTokenRefresh, nil, nil, &source, nil)
+
 	c.JSON(http.StatusOK, response)
 }
 
 // ValidateResponse represents the token validation response.
 type ValidateResponse struct {
-	Valid      bool  `json:"valid"`
-	TTLSeconds int64 `json:"ttl_seconds"`
+	Valid      bool   `json:"valid"`
+	TTLSeconds int64  `json:"ttl_seconds"`
+	UserID     int64  `json:"user_id"`
+	Username   string `json:"username"`
 }
 
 // Validate godoc
 // @Summary Validate access token
-// @Description Validate if access token is valid and return TTL
+// @Description Validate if access token is valid and return TTL with user claims
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -137,7 +165,7 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 		return
 	}
 
-	ttl, err := h.authService.ValidateToken(req.Token)
+	ttl, claims, err := h.authService.ValidateTokenWithClaims(req.Token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, ValidateResponse{Valid: false})
 		return
@@ -146,6 +174,8 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 	c.JSON(http.StatusOK, ValidateResponse{
 		Valid:      true,
 		TTLSeconds: ttl,
+		UserID:     claims.UserID,
+		Username:   claims.Username,
 	})
 }
 
