@@ -2,8 +2,10 @@
 package routes
 
 import (
+	"github.com/GunarsK-portfolio/auth-service/internal/config"
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
+	common "github.com/GunarsK-portfolio/portfolio-common/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
@@ -11,18 +13,15 @@ import (
 )
 
 // Setup configures all HTTP routes for the application.
-func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, metricsCollector *metrics.Metrics) {
-	// Enable CORS
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		c.Next()
-	})
+func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, cfg *config.Config, metricsCollector *metrics.Metrics) {
+	// Security middleware with CORS validation
+	securityMiddleware := common.NewSecurityMiddleware(
+		cfg.AllowedOrigins,
+		"GET,POST,PUT,DELETE,OPTIONS",
+		"Content-Type,Authorization",
+		true,
+	)
+	router.Use(securityMiddleware.Apply())
 
 	// Health check
 	router.GET("/health", healthHandler.Check)

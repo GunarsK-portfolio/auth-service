@@ -9,6 +9,8 @@ bin/
 *.test
 *.out
 coverage.txt
+coverage.out
+coverage.html
 
 # IDE
 .vscode/

@@ -24,6 +24,8 @@ README.md
 # Testing
 *_test.go
 coverage.txt
+coverage.out
+coverage.html
 
 # CI/CD
 .github

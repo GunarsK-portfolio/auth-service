@@ -13,9 +13,11 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/internal/routes"
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
 	"github.com/GunarsK-portfolio/auth-service/pkg/redis"
+	"github.com/GunarsK-portfolio/portfolio-common/audit"
 	commondb "github.com/GunarsK-portfolio/portfolio-common/database"
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
+	commonrepo "github.com/GunarsK-portfolio/portfolio-common/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -69,8 +71,9 @@ func main() {
 	redisClient := redis.NewClient(cfg)
 	appLogger.Info("Redis connection established")
 
-	// Initialize repository
+	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	actionLogRepo := commonrepo.NewActionLogRepository(db)
 
 	// Initialize services
 	//nolint:staticcheck // Embedded field name required for clarity
@@ -78,7 +81,7 @@ func main() {
 	authService := service.NewAuthService(userRepo, jwtService, redisClient)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, actionLogRepo)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Setup router with custom middleware
@@ -87,10 +90,11 @@ func main() {
 	// Add custom middleware
 	router.Use(logger.Recovery(appLogger))      // Panic recovery with logging
 	router.Use(logger.RequestLogger(appLogger)) // Request logging with context
+	router.Use(audit.ContextMiddleware())       // Extract IP and user agent for audit logging
 	router.Use(metricsCollector.Middleware())   // Prometheus metrics collection
 
 	// Setup routes
-	routes.Setup(router, authHandler, healthHandler, metricsCollector)
+	routes.Setup(router, authHandler, healthHandler, cfg, metricsCollector)
 
 	// Start server
 	port := os.Getenv("PORT")
