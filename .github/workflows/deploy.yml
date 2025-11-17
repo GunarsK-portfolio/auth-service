@@ -88,6 +88,7 @@ jobs:
         if: success()
         run: |
           SERVICE_ARN=$(aws apprunner list-services \
+            --region ${{ env.AWS_REGION }} \
             --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE'].ServiceArn" \
             --output text)
 
@@ -101,12 +102,17 @@ jobs:
       - name: Trigger App Runner deployment
         if: success()
         run: |
-          aws apprunner start-deployment --service-arn ${{ steps.service-arn.outputs.arn }}
+          aws apprunner start-deployment \
+            --region ${{ env.AWS_REGION }} \
+            --service-arn ${{ steps.service-arn.outputs.arn }}
           echo "Deployment triggered for $APP_RUNNER_SERVICE"
 
       - name: Wait for deployment
         if: success()
         run: |
           echo "Waiting for deployment to complete..."
-          aws apprunner wait service-running --service-arn ${{ steps.service-arn.outputs.arn }}
+          aws apprunner wait service-running \
+            --region ${{ env.AWS_REGION }} \
+            --service-arn ${{ steps.service-arn.outputs.arn }} \
+            --max-attempts 60
           echo "Deployment completed successfully"
