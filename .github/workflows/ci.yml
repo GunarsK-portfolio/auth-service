@@ -168,7 +168,7 @@ jobs:
         with:
           sarif_file: 'gosec-results.sarif'
 
-  # Job 6: Secret scanning with gitleaks
+  # Job 6: Secret scanning with TruffleHog
   secret-scan:
     name: Secret Scanning
     runs-on: ubuntu-latest
@@ -178,11 +178,12 @@ jobs:
         with:
           fetch-depth: 0 # Full history for scanning
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }} # Optional: for commercial use
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          head: ${{ github.ref }}
 
   # Job 7: Check for common issues
   code-quality:
