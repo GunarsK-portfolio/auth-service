@@ -58,7 +58,7 @@ func main() {
 		User:     cfg.DatabaseConfig.User,
 		Password: cfg.DatabaseConfig.Password,
 		DBName:   cfg.DatabaseConfig.Name,
-		SSLMode:  "disable",
+		SSLMode:  cfg.DatabaseConfig.SSLMode,
 		TimeZone: "UTC",
 	})
 	if err != nil {

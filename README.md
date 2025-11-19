@@ -203,6 +203,7 @@ When running, Swagger UI is available at:
 | `DB_USER` | Database user | `portfolio_user` |
 | `DB_PASSWORD` | Database password | `portfolio_pass` |
 | `DB_NAME` | Database name | `portfolio` |
+| `DB_SSLMODE` | PostgreSQL SSL mode | `disable` |
 | `REDIS_HOST` | Redis host | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_PASSWORD` | Redis password (optional) | `""` (empty) |
