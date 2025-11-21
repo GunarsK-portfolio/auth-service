@@ -2,6 +2,7 @@
 package routes
 
 import (
+	"github.com/GunarsK-portfolio/auth-service/docs"
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
@@ -38,6 +39,9 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler 
 		v1.GET("/token-status", authHandler.TokenStatus)
 	}
 
-	// Swagger documentation
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger documentation (only if SWAGGER_HOST is configured)
+	if cfg.SwaggerHost != "" {
+		docs.SwaggerInfo.Host = cfg.SwaggerHost
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 }

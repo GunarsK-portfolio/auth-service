@@ -7,10 +7,17 @@ import (
 	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
+	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+)
+
+const (
+	testSecret        = "this-is-a-test-secret-with-32-bytes!"
+	testAccessExpiry  = 15 * time.Minute
+	testRefreshExpiry = 168 * time.Hour
 )
 
 // =============================================================================
@@ -83,7 +90,10 @@ func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mo
 	t.Helper()
 
 	redisClient, mr := setupTestRedis(t)
-	jwtService := NewJWTService(testSecret, testAccessExpiry, testRefreshExpiry)
+	jwtService, err := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("Failed to create JWT service: %v", err)
+	}
 	mockRepo := &mockUserRepository{}
 
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
@@ -107,7 +117,7 @@ func TestNewAuthService(t *testing.T) {
 	redisClient, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	jwtService := NewJWTService(testSecret, testAccessExpiry, testRefreshExpiry)
+	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
 
 	service := NewAuthService(mockRepo, jwtService, redisClient)
@@ -121,7 +131,7 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 	redisClient, mr := setupTestRedis(t)
 	defer mr.Close()
 
-	jwtService := NewJWTService(testSecret, testAccessExpiry, testRefreshExpiry)
+	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
 
 	var _ = NewAuthService(mockRepo, jwtService, redisClient)
@@ -357,7 +367,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	defer mr.Close()
 
 	shortExpiry := 1 * time.Second
-	jwtService := NewJWTService(testSecret, shortExpiry, testRefreshExpiry)
+	jwtService, _ := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
@@ -469,7 +479,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	defer mr.Close()
 
 	shortExpiry := 1 * time.Second
-	jwtService := NewJWTService(testSecret, testAccessExpiry, shortExpiry)
+	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, shortExpiry)
 	mockRepo := &mockUserRepository{}
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
@@ -602,7 +612,10 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 	defer mr.Close()
 
 	shortExpiry := 1 * time.Second
-	jwtService := NewJWTService(testSecret, shortExpiry, testRefreshExpiry)
+	jwtService, err := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
 	mockRepo := &mockUserRepository{}
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
@@ -629,7 +642,10 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 	defer mr.Close()
 
 	shortExpiry := 2 * time.Second
-	jwtService := NewJWTService(testSecret, shortExpiry, testRefreshExpiry)
+	jwtService, err := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
 	mockRepo := &mockUserRepository{}
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 

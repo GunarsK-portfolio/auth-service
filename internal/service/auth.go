@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
+	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -40,17 +41,17 @@ type AuthService interface {
 	Logout(ctx context.Context, token string) error
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
-	ValidateTokenWithClaims(token string) (int64, *Claims, error)
+	ValidateTokenWithClaims(token string) (int64, *jwt.Claims, error)
 }
 
 type authService struct {
 	userRepo   repository.UserRepository
-	jwtService JWTService
+	jwtService jwt.Service
 	redis      *redis.Client
 }
 
 // NewAuthService creates a new AuthService instance.
-func NewAuthService(userRepo repository.UserRepository, jwtService JWTService, redisClient *redis.Client) AuthService {
+func NewAuthService(userRepo repository.UserRepository, jwtService jwt.Service, redisClient *redis.Client) AuthService {
 	return &authService{
 		userRepo:   userRepo,
 		jwtService: jwtService,
@@ -156,7 +157,7 @@ func (s *authService) ValidateToken(token string) (int64, error) {
 	return ttl, nil
 }
 
-func (s *authService) ValidateTokenWithClaims(token string) (int64, *Claims, error) {
+func (s *authService) ValidateTokenWithClaims(token string) (int64, *jwt.Claims, error) {
 	claims, err := s.jwtService.ValidateToken(token)
 	if err != nil {
 		return 0, nil, err
