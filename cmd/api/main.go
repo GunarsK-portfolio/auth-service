@@ -15,6 +15,7 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/pkg/redis"
 	"github.com/GunarsK-portfolio/portfolio-common/audit"
 	commondb "github.com/GunarsK-portfolio/portfolio-common/database"
+	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	commonrepo "github.com/GunarsK-portfolio/portfolio-common/repository"
@@ -77,7 +78,11 @@ func main() {
 
 	// Initialize services
 	//nolint:staticcheck // Embedded field name required for clarity
-	jwtService := service.NewJWTService(cfg.JWTConfig.Secret, cfg.JWTConfig.AccessExpiry, cfg.JWTConfig.RefreshExpiry)
+	jwtService, err := jwt.NewService(cfg.JWTConfig.Secret, cfg.JWTConfig.AccessExpiry, cfg.JWTConfig.RefreshExpiry)
+	if err != nil {
+		appLogger.Error("Failed to create JWT service", "error", err)
+		log.Fatal("Failed to create JWT service:", err)
+	}
 	authService := service.NewAuthService(userRepo, jwtService, redisClient)
 
 	// Initialize handlers
