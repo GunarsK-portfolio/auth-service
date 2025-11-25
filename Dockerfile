@@ -13,7 +13,7 @@ RUN go build -o auth-service ./cmd/api
 # Production stage
 FROM alpine:3.22
 
-RUN apk --no-cache add ca-certificates
+RUN apk upgrade --no-cache && apk --no-cache add ca-certificates
 
 # Create non-root user
 RUN addgroup -g 1000 app && \
