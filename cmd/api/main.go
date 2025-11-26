@@ -2,7 +2,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	commonrepo "github.com/GunarsK-portfolio/portfolio-common/repository"
+	"github.com/GunarsK-portfolio/portfolio-common/server"
 	"github.com/gin-gonic/gin"
 )
 
@@ -101,15 +101,17 @@ func main() {
 	// Setup routes
 	routes.Setup(router, authHandler, healthHandler, cfg, metricsCollector)
 
-	// Start server
+	// Start server with graceful shutdown
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8084"
 	}
 
 	appLogger.Info("Auth service ready", "port", port, "environment", os.Getenv("ENVIRONMENT"))
-	if err := router.Run(fmt.Sprintf(":%s", port)); err != nil {
-		appLogger.Error("Failed to start server", "error", err)
-		log.Fatal("Failed to start server:", err)
+
+	serverCfg := server.DefaultConfig(port)
+	if err := server.Run(router, serverCfg, appLogger); err != nil {
+		appLogger.Error("Server error", "error", err)
+		log.Fatal("Server error:", err)
 	}
 }
