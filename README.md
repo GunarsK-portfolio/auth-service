@@ -2,7 +2,8 @@
 
 ![CI](https://github.com/GunarsK-portfolio/auth-service/workflows/CI/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/GunarsK-portfolio/auth-service)](https://goreportcard.com/report/github.com/GunarsK-portfolio/auth-service)
-[![codecov](https://codecov.io/gh/GunarsK-portfolio/auth-service/branch/main/graph/badge.svg)](https://codecov.io/gh/GunarsK-portfolio/auth-service)
+[![codecov](https://codecov.io/gh/GunarsK-portfolio/auth-service/graph/badge.svg?token=2AMRCW3LB7)](https://codecov.io/gh/GunarsK-portfolio/auth-service)
+[![CodeRabbit](https://img.shields.io/coderabbit/prs/github/GunarsK-portfolio/auth-service?label=CodeRabbit&color=FF570A)](https://coderabbit.ai)
 
 JWT-based authentication service with refresh token support.
 
@@ -258,4 +259,4 @@ endpoints in admin-api validate JWT tokens issued by this service.
 
 ## License
 
-MIT
+[MIT](LICENSE)

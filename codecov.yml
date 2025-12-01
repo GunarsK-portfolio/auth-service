@@ -1,0 +1,23 @@
+# Codecov configuration
+# Only measure coverage for service (where tests exist)
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 5%
+    patch:
+      default:
+        target: auto
+        threshold: 5%
+
+ignore:
+  - "cmd/**/*"
+  - "docs/**/*"
+  - "pkg/**/*"
+  - "internal/config/**/*"
+  - "internal/models/**/*"
+  - "internal/routes/**/*"
+  - "internal/repository/**/*"
+  - "internal/handlers/**/*"
