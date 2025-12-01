@@ -13,11 +13,11 @@ coverage:
         threshold: 5%
 
 ignore:
-  - "cmd/**/*"
-  - "docs/**/*"
-  - "pkg/**/*"
-  - "internal/config/**/*"
-  - "internal/models/**/*"
-  - "internal/routes/**/*"
-  - "internal/repository/**/*"
-  - "internal/handlers/**/*"
+  - "cmd/"
+  - "docs/"
+  - "pkg/"
+  - "internal/config/"
+  - "internal/models/"
+  - "internal/routes/"
+  - "internal/repository/"
+  - "internal/handlers/"
