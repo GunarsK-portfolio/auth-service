@@ -26,7 +26,7 @@ go test -v -run TestLogin ./internal/service/
 
 ## Test Files
 
-**`auth_test.go`** - 31 tests
+**`auth_test.go`** - 23 tests
 
 - Login flow (7)
 - Logout flow (4)

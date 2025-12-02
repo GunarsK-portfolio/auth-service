@@ -17,7 +17,7 @@ type Config struct {
 func Load() *Config {
 	cfg := &Config{
 		DatabaseConfig: common.NewDatabaseConfig(),
-		ServiceConfig:  common.NewServiceConfig("8084"),
+		ServiceConfig:  common.NewServiceConfig(8084),
 		RedisConfig:    common.NewRedisConfig(),
 		JWTConfig:      common.NewJWTConfig(),
 	}

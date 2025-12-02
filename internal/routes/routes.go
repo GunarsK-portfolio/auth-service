@@ -5,6 +5,7 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/docs"
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
+	"github.com/GunarsK-portfolio/portfolio-common/health"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	common "github.com/GunarsK-portfolio/portfolio-common/middleware"
 	"github.com/gin-gonic/gin"
@@ -14,7 +15,7 @@ import (
 )
 
 // Setup configures all HTTP routes for the application.
-func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, cfg *config.Config, metricsCollector *metrics.Metrics) {
+func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Config, metricsCollector *metrics.Metrics, healthAgg *health.Aggregator) {
 	// Security middleware with CORS validation
 	securityMiddleware := common.NewSecurityMiddleware(
 		cfg.AllowedOrigins,
@@ -25,7 +26,7 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, healthHandler 
 	router.Use(securityMiddleware.Apply())
 
 	// Health check
-	router.GET("/health", healthHandler.Check)
+	router.GET("/health", healthAgg.Handler())
 	// Metrics
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 

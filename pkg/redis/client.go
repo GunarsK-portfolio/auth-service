@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strconv"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
 	"github.com/redis/go-redis/v9"
@@ -15,7 +16,7 @@ import (
 //nolint:staticcheck // Embedded field names required due to ambiguous fields
 func NewClient(cfg *config.Config) *redis.Client {
 	options := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", cfg.RedisConfig.Host, cfg.RedisConfig.Port),
+		Addr:     fmt.Sprintf("%s:%s", cfg.RedisConfig.Host, strconv.Itoa(cfg.RedisConfig.Port)),
 		Password: cfg.RedisConfig.Password,
 		DB:       0,
 	}
