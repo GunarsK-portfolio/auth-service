@@ -186,7 +186,7 @@ const docTemplate = `{
         },
         "/auth/validate": {
             "post": {
-                "description": "Validate if access token is valid and return TTL",
+                "description": "Validate if access token is valid and return TTL with user claims",
                 "consumes": [
                     "application/json"
                 ],
@@ -226,29 +226,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/health": {
-            "get": {
-                "description": "Check if service is healthy",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "health"
-                ],
-                "summary": "Health check",
-                "responses": {
-                    "200": {
-                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -314,6 +291,12 @@ const docTemplate = `{
             "properties": {
                 "ttl_seconds": {
                     "type": "integer"
+                },
+                "user_id": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 },
                 "valid": {
                     "type": "boolean"

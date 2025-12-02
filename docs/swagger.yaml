@@ -35,6 +35,10 @@ definitions:
     properties:
       ttl_seconds:
         type: integer
+      user_id:
+        type: integer
+      username:
+        type: string
       valid:
         type: boolean
     type: object
@@ -167,7 +171,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Validate if access token is valid and return TTL
+      description: Validate if access token is valid and return TTL with user claims
       parameters:
       - description: Access token
         in: body
@@ -197,21 +201,6 @@ paths:
       summary: Validate access token
       tags:
       - auth
-  /health:
-    get:
-      description: Check if service is healthy
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Health check
-      tags:
-      - health
 securityDefinitions:
   BearerAuth:
     description: Type "Bearer" followed by a space and JWT token.
