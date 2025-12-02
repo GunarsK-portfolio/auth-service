@@ -4,6 +4,8 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
+	"time"
 
 	_ "github.com/GunarsK-portfolio/auth-service/docs"
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
@@ -14,6 +16,7 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/pkg/redis"
 	"github.com/GunarsK-portfolio/portfolio-common/audit"
 	commondb "github.com/GunarsK-portfolio/portfolio-common/database"
+	"github.com/GunarsK-portfolio/portfolio-common/health"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
@@ -55,22 +58,31 @@ func main() {
 	//nolint:staticcheck // Embedded field name required due to ambiguous fields (DatabaseConfig.Host vs RedisConfig.Host)
 	db, err := commondb.Connect(commondb.PostgresConfig{
 		Host:     cfg.DatabaseConfig.Host,
-		Port:     cfg.DatabaseConfig.Port,
+		Port:     strconv.Itoa(cfg.DatabaseConfig.Port),
 		User:     cfg.DatabaseConfig.User,
 		Password: cfg.DatabaseConfig.Password,
 		DBName:   cfg.DatabaseConfig.Name,
 		SSLMode:  cfg.DatabaseConfig.SSLMode,
-		TimeZone: "UTC",
 	})
 	if err != nil {
 		appLogger.Error("Failed to connect to database", "error", err)
 		log.Fatal("Failed to connect to database:", err)
 	}
+	defer func() {
+		if closeErr := commondb.CloseDB(db); closeErr != nil {
+			appLogger.Error("Failed to close database", "error", closeErr)
+		}
+	}()
 	appLogger.Info("Database connection established")
 
 	// Initialize Redis
 	redisClient := redis.NewClient(cfg)
 	appLogger.Info("Redis connection established")
+
+	// Health checks
+	healthAgg := health.NewAggregator(3 * time.Second)
+	healthAgg.Register(health.NewPostgresChecker(db))
+	healthAgg.Register(health.NewRedisChecker(redisClient))
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
@@ -87,7 +99,6 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService, actionLogRepo)
-	healthHandler := handlers.NewHealthHandler()
 
 	// Setup router with custom middleware
 	router := gin.New()
@@ -99,7 +110,7 @@ func main() {
 	router.Use(metricsCollector.Middleware())   // Prometheus metrics collection
 
 	// Setup routes
-	routes.Setup(router, authHandler, healthHandler, cfg, metricsCollector)
+	routes.Setup(router, authHandler, cfg, metricsCollector, healthAgg)
 
 	// Start server with graceful shutdown
 	port := os.Getenv("PORT")
