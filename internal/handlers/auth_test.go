@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,13 +201,13 @@ func TestLogin_Success(t *testing.T) {
 
 	var hasAccess, hasRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == "access_token" {
+		if cookie.Name == AccessTokenCookie {
 			hasAccess = true
 			if cookie.Value != "access_token_123" {
 				t.Errorf("access_token value = %s, want access_token_123", cookie.Value)
 			}
 		}
-		if cookie.Name == "refresh_token" {
+		if cookie.Name == RefreshTokenCookie {
 			hasRefresh = true
 			if cookie.Value != "refresh_token_456" {
 				t.Errorf("refresh_token value = %s, want refresh_token_456", cookie.Value)
@@ -303,7 +304,7 @@ func TestLogout_Success_Cookie(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
 
 	handler.Logout(c)
 
@@ -314,7 +315,7 @@ func TestLogout_Success_Cookie(t *testing.T) {
 	// Verify cookies are cleared (MaxAge=-1)
 	cookies := w.Result().Cookies()
 	for _, cookie := range cookies {
-		if cookie.Name == "access_token" || cookie.Name == "refresh_token" {
+		if cookie.Name == AccessTokenCookie || cookie.Name == RefreshTokenCookie {
 			if cookie.MaxAge != -1 {
 				t.Errorf("cookie %s should have MaxAge=-1, got %d", cookie.Name, cookie.MaxAge)
 			}
@@ -376,7 +377,7 @@ func TestLogout_ServiceError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
 
 	handler.Logout(c)
 
@@ -406,7 +407,7 @@ func TestRefresh_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "refresh_token", Value: "old_refresh_token"})
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
 
 	handler.Refresh(c)
 
@@ -427,10 +428,10 @@ func TestRefresh_Success(t *testing.T) {
 	cookies := w.Result().Cookies()
 	var hasNewAccess, hasNewRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == "access_token" && cookie.Value == "new_access_token" {
+		if cookie.Name == AccessTokenCookie && cookie.Value == "new_access_token" {
 			hasNewAccess = true
 		}
-		if cookie.Name == "refresh_token" && cookie.Value == "new_refresh_token" {
+		if cookie.Name == RefreshTokenCookie && cookie.Value == "new_refresh_token" {
 			hasNewRefresh = true
 		}
 	}
@@ -471,7 +472,7 @@ func TestRefresh_InvalidToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "refresh_token", Value: "invalid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "invalid_token"})
 
 	handler.Refresh(c)
 
@@ -578,7 +579,7 @@ func TestTokenStatus_Success_Cookie(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/api/v1/auth/token-status", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
 
 	handler.TokenStatus(c)
 
@@ -662,7 +663,7 @@ func TestTokenStatus_InvalidToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/api/v1/auth/token-status", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "invalid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "invalid_token"})
 
 	handler.TokenStatus(c)
 
@@ -684,7 +685,7 @@ func TestTokenStatus_ExpiredToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/api/v1/auth/token-status", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "expired_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "expired_token"})
 
 	handler.TokenStatus(c)
 
@@ -787,7 +788,7 @@ func TestLogout_CookiePriorityOverHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "cookie_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "cookie_token"})
 	c.Request.Header.Set("Authorization", "Bearer header_token")
 
 	handler.Logout(c)
@@ -812,12 +813,159 @@ func TestTokenStatus_CookiePriorityOverHeader(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/api/v1/auth/token-status", nil)
-	c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: "cookie_token"})
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "cookie_token"})
 	c.Request.Header.Set("Authorization", "Bearer header_token")
 
 	handler.TokenStatus(c)
 
 	if receivedToken != "cookie_token" {
 		t.Errorf("expected cookie_token to be used, got %s", receivedToken)
+	}
+}
+
+// =============================================================================
+// Security Tests - Tokens Not Exposed in Response Body
+// =============================================================================
+
+func TestLogin_TokensNotInResponseBody(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+			return &service.LoginResponse{
+				AccessToken:  "secret_access_token",
+				RefreshToken: "secret_refresh_token",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "testuser",
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
+		Username: "testuser",
+		Password: "password123",
+	})
+
+	handler.Login(c)
+
+	// Verify tokens are NOT in response body
+	body := w.Body.String()
+	if strings.Contains(body, "secret_access_token") {
+		t.Error("access_token should not be in response body")
+	}
+	if strings.Contains(body, "secret_refresh_token") {
+		t.Error("refresh_token should not be in response body")
+	}
+	if strings.Contains(body, "access_token") && strings.Contains(body, "secret") {
+		t.Error("tokens should not be exposed in response body")
+	}
+
+	// Verify tokens ARE in cookies
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie && cookie.Value == "secret_access_token" {
+			foundAccess = true
+		}
+		if cookie.Name == RefreshTokenCookie && cookie.Value == "secret_refresh_token" {
+			foundRefresh = true
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token should be in cookie")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token should be in cookie")
+	}
+}
+
+func TestRefresh_TokensNotInResponseBody(t *testing.T) {
+	mockService := &mockAuthService{
+		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+			return &service.LoginResponse{
+				AccessToken:  "new_secret_access",
+				RefreshToken: "new_secret_refresh",
+				ExpiresIn:    900,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh"})
+
+	handler.Refresh(c)
+
+	// Verify tokens are NOT in response body
+	body := w.Body.String()
+	if strings.Contains(body, "new_secret_access") {
+		t.Error("access_token should not be in response body")
+	}
+	if strings.Contains(body, "new_secret_refresh") {
+		t.Error("refresh_token should not be in response body")
+	}
+}
+
+// =============================================================================
+// extractToken Security Tests
+// =============================================================================
+
+func TestExtractToken_RequiresBearerScheme(t *testing.T) {
+	tests := []struct {
+		name       string
+		authHeader string
+		want       string
+	}{
+		{
+			name:       "valid Bearer token",
+			authHeader: "Bearer valid_token",
+			want:       "valid_token",
+		},
+		{
+			name:       "lowercase bearer rejected",
+			authHeader: "bearer lowercase_token",
+			want:       "",
+		},
+		{
+			name:       "Basic auth rejected",
+			authHeader: "Basic dXNlcjpwYXNz",
+			want:       "",
+		},
+		{
+			name:       "arbitrary scheme rejected",
+			authHeader: "Token some_token",
+			want:       "",
+		},
+		{
+			name:       "no scheme rejected",
+			authHeader: "just_a_token",
+			want:       "",
+		},
+		{
+			name:       "empty header",
+			authHeader: "",
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("GET", "/", nil)
+			if tt.authHeader != "" {
+				c.Request.Header.Set("Authorization", tt.authHeader)
+			}
+
+			got := extractToken(c)
+			if got != tt.want {
+				t.Errorf("extractToken() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

@@ -47,7 +47,7 @@ go test -v -run TestLogin ./internal/service/
 | Validate Token | 4 | Valid token, invalid token, expired token, almost-expired |
 | Concurrency | 2 | Concurrent logins, concurrent refresh |
 
-**`internal/handlers/auth_test.go`** - 25 tests
+**`internal/handlers/auth_test.go`** - 30 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
@@ -56,9 +56,10 @@ go test -v -run TestLogin ./internal/service/
 | Refresh | 3 | Success with new cookies, no token, invalid token |
 | Validate | 3 | Success with claims, invalid token, missing token |
 | TokenStatus | 5 | Success (cookie), success (header), no token, invalid token, expired token |
-| extractToken | 4 | Valid bearer, no header, invalid format, multiple spaces |
+| extractToken | 10 | Valid bearer, no header, invalid format, multiple spaces, Bearer scheme required |
 | Constructor | 1 | NewAuthHandler initialization |
 | Cookie Priority | 2 | Cookie preferred over header for logout/token-status |
+| Security | 2 | Tokens not exposed in response body (login, refresh) |
 
 **`internal/handlers/cookie_test.go`** - 5 tests
 
@@ -70,17 +71,17 @@ go test -v -run TestLogin ./internal/service/
 | GetRefreshToken | 1 | Extract refresh_token from cookie |
 | Missing Cookie | 1 | Returns empty string for missing cookie |
 
-**`internal/middleware/csrf_test.go`** - 18 tests
+**`internal/middleware/csrf_test.go`** - 22 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
 | Safe Methods | 3 | GET, HEAD, OPTIONS pass without validation |
 | Valid Origin | 3 | Valid origin, trailing slash, case insensitive |
-| Invalid Origin | 2 | Invalid origin blocked, wrong port blocked |
+| Invalid Origin | 3 | Invalid origin blocked, wrong port blocked, Origin: null blocked |
 | Referer Fallback | 2 | Valid referer passes, invalid referer blocked |
 | Missing Headers | 1 | No origin or referer blocked (CSRF protection) |
 | State-Changing | 3 | PUT, DELETE, PATCH validated |
-| Helper Functions | 4 | extractOrigin URL parsing |
+| Helper Functions | 6 | extractOrigin URL parsing, malformed URL handling, null/empty string |
 
 Tests are organized in: `auth_test.go` (service), `auth_test.go` (handlers),
 `cookie_test.go`, `csrf_test.go`.

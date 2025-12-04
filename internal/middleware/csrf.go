@@ -82,7 +82,7 @@ func isAllowedOrigin(origin string, allowedSet map[string]bool) bool {
 // extractOrigin extracts the origin (scheme://host:port) from a URL.
 func extractOrigin(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
-	if err != nil {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
 	}
 	// Reconstruct origin: scheme://host (port included in Host if non-standard)

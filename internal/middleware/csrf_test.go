@@ -107,6 +107,14 @@ func TestCSRF(t *testing.T) {
 			referer:    "",
 			wantStatus: http.StatusForbidden,
 		},
+		// Origin: null (privacy mode, file://, data: URLs, cross-origin redirects)
+		{
+			name:       "POST with Origin null blocked",
+			method:     http.MethodPost,
+			origin:     "null",
+			referer:    "",
+			wantStatus: http.StatusForbidden,
+		},
 		// Other state-changing methods
 		{
 			name:       "PUT with valid origin passes",
@@ -185,9 +193,19 @@ func TestExtractOrigin(t *testing.T) {
 			want:   "http://example.com",
 		},
 		{
-			name:   "invalid URL",
+			name:   "path only (no scheme)",
 			rawURL: "not-a-url",
-			want:   "://",
+			want:   "", // No scheme means invalid origin
+		},
+		{
+			name:   "empty string",
+			rawURL: "",
+			want:   "",
+		},
+		{
+			name:   "null string",
+			rawURL: "null",
+			want:   "", // "null" has no scheme
 		},
 	}
 

@@ -268,8 +268,9 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 
 func extractToken(c *gin.Context) string {
 	bearerToken := c.GetHeader("Authorization")
-	if len(strings.Split(bearerToken, " ")) == 2 {
-		return strings.Split(bearerToken, " ")[1]
+	parts := strings.Split(bearerToken, " ")
+	if len(parts) == 2 && parts[0] == "Bearer" {
+		return parts[1]
 	}
 	return ""
 }
