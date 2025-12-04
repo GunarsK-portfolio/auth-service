@@ -5,6 +5,7 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/docs"
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
+	"github.com/GunarsK-portfolio/auth-service/internal/middleware"
 	"github.com/GunarsK-portfolio/portfolio-common/health"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
 	common "github.com/GunarsK-portfolio/portfolio-common/middleware"
@@ -24,6 +25,13 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 		true,
 	)
 	router.Use(securityMiddleware.Apply())
+
+	// CSRF protection for cookie-based authentication
+	// Validates Origin/Referer headers on state-changing requests
+	csrfMiddleware := middleware.CSRF(middleware.CSRFConfig{
+		AllowedOrigins: cfg.AllowedOrigins,
+	})
+	router.Use(csrfMiddleware)
 
 	// Health check
 	router.GET("/health", healthAgg.Handler())

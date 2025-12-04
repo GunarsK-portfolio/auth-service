@@ -159,14 +159,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Get refresh token from cookie
 	refreshToken := h.cookieHelper.GetRefreshToken(c)
 	if refreshToken == "" {
-		// Fallback to body for backwards compatibility during migration
-		var req RefreshRequest
-		if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
-			refreshToken = req.RefreshToken
-		}
-	}
-
-	if refreshToken == "" {
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "refresh token required")
 		return
 	}

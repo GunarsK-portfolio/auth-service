@@ -18,6 +18,7 @@ func TestSetAuthCookies(t *testing.T) {
 		cookieConfig common.CookieConfig
 		wantSecure   bool
 		wantSameSite http.SameSite
+		wantDomain   string // Go http strips leading dot from domain per RFC 6265
 	}{
 		{
 			name: "development config",
@@ -29,6 +30,7 @@ func TestSetAuthCookies(t *testing.T) {
 			},
 			wantSecure:   false,
 			wantSameSite: http.SameSiteLaxMode,
+			wantDomain:   "",
 		},
 		{
 			name: "production config",
@@ -40,6 +42,7 @@ func TestSetAuthCookies(t *testing.T) {
 			},
 			wantSecure:   true,
 			wantSameSite: http.SameSiteStrictMode,
+			wantDomain:   "gunarsk.com", // Leading dot stripped by http package
 		},
 	}
 
@@ -80,6 +83,15 @@ func TestSetAuthCookies(t *testing.T) {
 			if accessCookie.Secure != tt.wantSecure {
 				t.Errorf("access_token Secure = %v, want %v", accessCookie.Secure, tt.wantSecure)
 			}
+			if accessCookie.SameSite != tt.wantSameSite {
+				t.Errorf("access_token SameSite = %v, want %v", accessCookie.SameSite, tt.wantSameSite)
+			}
+			if accessCookie.Path != tt.cookieConfig.Path {
+				t.Errorf("access_token Path = %s, want %s", accessCookie.Path, tt.cookieConfig.Path)
+			}
+			if accessCookie.Domain != tt.wantDomain {
+				t.Errorf("access_token Domain = %s, want %s", accessCookie.Domain, tt.wantDomain)
+			}
 
 			if refreshCookie == nil {
 				t.Error("refresh_token cookie not found")
@@ -90,6 +102,19 @@ func TestSetAuthCookies(t *testing.T) {
 			}
 			if !refreshCookie.HttpOnly {
 				t.Error("refresh_token should be HttpOnly")
+			}
+			if refreshCookie.Secure != tt.wantSecure {
+				t.Errorf("refresh_token Secure = %v, want %v", refreshCookie.Secure, tt.wantSecure)
+			}
+			if refreshCookie.SameSite != tt.wantSameSite {
+				t.Errorf("refresh_token SameSite = %v, want %v", refreshCookie.SameSite, tt.wantSameSite)
+			}
+			// Refresh token uses restricted path for security (not config.Path)
+			if refreshCookie.Path != RefreshTokenPath {
+				t.Errorf("refresh_token Path = %s, want %s", refreshCookie.Path, RefreshTokenPath)
+			}
+			if refreshCookie.Domain != tt.wantDomain {
+				t.Errorf("refresh_token Domain = %s, want %s", refreshCookie.Domain, tt.wantDomain)
 			}
 		})
 	}
