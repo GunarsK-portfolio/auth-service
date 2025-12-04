@@ -8,6 +8,7 @@ import (
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
 	"github.com/GunarsK-portfolio/portfolio-common/audit"
 	commonHandlers "github.com/GunarsK-portfolio/portfolio-common/handlers"
+	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/GunarsK-portfolio/portfolio-common/repository"
 	"github.com/gin-gonic/gin"
 )
@@ -16,13 +17,22 @@ import (
 type AuthHandler struct {
 	authService   service.AuthService
 	actionLogRepo repository.ActionLogRepository
+	cookieHelper  *CookieHelper
+	jwtService    jwt.Service
 }
 
 // NewAuthHandler creates a new AuthHandler instance.
-func NewAuthHandler(authService service.AuthService, actionLogRepo repository.ActionLogRepository) *AuthHandler {
+func NewAuthHandler(
+	authService service.AuthService,
+	actionLogRepo repository.ActionLogRepository,
+	cookieHelper *CookieHelper,
+	jwtService jwt.Service,
+) *AuthHandler {
 	return &AuthHandler{
 		authService:   authService,
 		actionLogRepo: actionLogRepo,
+		cookieHelper:  cookieHelper,
+		jwtService:    jwtService,
 	}
 }
 
@@ -42,14 +52,22 @@ type ValidateRequest struct {
 	Token string `json:"token" binding:"required"`
 }
 
+// LoginResponse is the response body for login (tokens are in httpOnly cookies).
+type LoginResponse struct {
+	Success   bool   `json:"success"`
+	ExpiresIn int64  `json:"expires_in"`
+	UserID    int64  `json:"user_id,omitempty"`
+	Username  string `json:"username,omitempty"`
+}
+
 // Login godoc
 // @Summary User login
-// @Description Authenticate user and return access and refresh tokens
+// @Description Authenticate user and set httpOnly cookies with tokens
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body LoginRequest true "Login credentials"
-// @Success 200 {object} service.LoginResponse
+// @Success 200 {object} LoginResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/login [post]
@@ -72,25 +90,43 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Set httpOnly cookies instead of returning tokens in body
+	h.cookieHelper.SetAuthCookies(
+		c,
+		response.AccessToken,
+		response.RefreshToken,
+		h.jwtService.GetAccessExpiry(),
+		h.jwtService.GetRefreshExpiry(),
+	)
+
 	// Log successful login with explicit user_id
 	source := "auth-service"
 	_ = audit.LogAction(c, h.actionLogRepo, audit.ActionLoginSuccess, nil, nil, &response.UserID, &source, map[string]interface{}{
 		"username": response.Username,
 	})
 
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, LoginResponse{
+		Success:   true,
+		ExpiresIn: response.ExpiresIn,
+		UserID:    response.UserID,
+		Username:  response.Username,
+	})
 }
 
 // Logout godoc
 // @Summary User logout
-// @Description Invalidate refresh token
+// @Description Invalidate refresh token and clear cookies
 // @Tags auth
 // @Security BearerAuth
 // @Success 200 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	token := extractToken(c)
+	// Try cookie first, then header
+	token := h.cookieHelper.GetAccessToken(c)
+	if token == "" {
+		token = extractToken(c)
+	}
 	if token == "" {
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "unauthorized")
 		return
@@ -101,6 +137,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
+	// Clear cookies
+	h.cookieHelper.ClearAuthCookies(c)
+
 	// Log logout (user_id automatically extracted from context by auth middleware)
 	source := "auth-service"
 	_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLogout, nil, nil, &source, nil)
@@ -110,33 +149,43 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 // Refresh godoc
 // @Summary Refresh access token
-// @Description Get new access and refresh tokens using refresh token
+// @Description Get new tokens using refresh token from cookie
 // @Tags auth
-// @Accept json
 // @Produce json
-// @Param request body RefreshRequest true "Refresh token"
-// @Success 200 {object} service.LoginResponse
-// @Failure 400 {object} map[string]string
+// @Success 200 {object} LoginResponse
 // @Failure 401 {object} map[string]string
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	var req RefreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+	// Get refresh token from cookie
+	refreshToken := h.cookieHelper.GetRefreshToken(c)
+	if refreshToken == "" {
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "refresh token required")
 		return
 	}
 
-	response, err := h.authService.RefreshToken(c.Request.Context(), req.RefreshToken)
+	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
 		return
 	}
 
+	// Set new cookies
+	h.cookieHelper.SetAuthCookies(
+		c,
+		response.AccessToken,
+		response.RefreshToken,
+		h.jwtService.GetAccessExpiry(),
+		h.jwtService.GetRefreshExpiry(),
+	)
+
 	// Log token refresh
 	source := "auth-service"
 	_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionTokenRefresh, nil, nil, &source, nil)
 
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, LoginResponse{
+		Success:   true,
+		ExpiresIn: response.ExpiresIn,
+	})
 }
 
 // ValidateResponse represents the token validation response.
@@ -187,7 +236,7 @@ type TokenStatusResponse struct {
 
 // TokenStatus godoc
 // @Summary Check token status
-// @Description Check if token is valid and return remaining TTL (reads from Authorization header)
+// @Description Check if token is valid and return remaining TTL (reads from cookie or Authorization header)
 // @Tags auth
 // @Security BearerAuth
 // @Produce json
@@ -195,7 +244,11 @@ type TokenStatusResponse struct {
 // @Failure 401 {object} TokenStatusResponse
 // @Router /auth/token-status [get]
 func (h *AuthHandler) TokenStatus(c *gin.Context) {
-	token := extractToken(c)
+	// Try cookie first, then header
+	token := h.cookieHelper.GetAccessToken(c)
+	if token == "" {
+		token = extractToken(c)
+	}
 	if token == "" {
 		c.JSON(http.StatusUnauthorized, TokenStatusResponse{Valid: false, TTLSeconds: 0})
 		return
@@ -215,8 +268,9 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 
 func extractToken(c *gin.Context) string {
 	bearerToken := c.GetHeader("Authorization")
-	if len(strings.Split(bearerToken, " ")) == 2 {
-		return strings.Split(bearerToken, " ")[1]
+	parts := strings.Split(bearerToken, " ")
+	if len(parts) == 2 && parts[0] == "Bearer" {
+		return parts[1]
 	}
 	return ""
 }
