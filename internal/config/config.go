@@ -11,6 +11,7 @@ type Config struct {
 	common.ServiceConfig
 	common.RedisConfig
 	common.JWTConfig
+	common.CookieConfig
 }
 
 // Load reads configuration from environment variables.
@@ -20,6 +21,7 @@ func Load() *Config {
 		ServiceConfig:  common.NewServiceConfig(8084),
 		RedisConfig:    common.NewRedisConfig(),
 		JWTConfig:      common.NewJWTConfig(),
+		CookieConfig:   common.NewCookieConfig(),
 	}
 
 	// Defense-in-depth: Explicitly verify JWT secret is configured

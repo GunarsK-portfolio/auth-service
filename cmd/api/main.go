@@ -97,8 +97,11 @@ func main() {
 	}
 	authService := service.NewAuthService(userRepo, jwtService, redisClient)
 
+	// Initialize cookie helper
+	cookieHelper := handlers.NewCookieHelper(cfg.CookieConfig)
+
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService, actionLogRepo)
+	authHandler := handlers.NewAuthHandler(authService, actionLogRepo, cookieHelper, jwtService)
 
 	// Setup router with custom middleware
 	router := gin.New()

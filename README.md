@@ -182,11 +182,15 @@ Response:
 
 ```json
 {
-  "access_token": "eyJhbGc...",
-  "refresh_token": "eyJhbGc...",
-  "expires_in": 900
+  "success": true,
+  "expires_in": 900,
+  "user_id": 1,
+  "username": "admin"
 }
 ```
+
+**Note**: Tokens are set as httpOnly cookies (`access_token`, `refresh_token`).
+They are not returned in the response body for security.
 
 ## Swagger Documentation
 
@@ -196,26 +200,29 @@ When running, Swagger UI is available at:
 
 ## Environment Variables
 
-| Variable | Description | Default |
-| -------- | ----------- | ------- |
-| `PORT` | Server port | `8084` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_USER` | Database user | `portfolio_user` |
-| `DB_PASSWORD` | Database password | `portfolio_pass` |
-| `DB_NAME` | Database name | `portfolio` |
-| `DB_SSLMODE` | PostgreSQL SSL mode | `disable` |
-| `REDIS_HOST` | Redis host | `localhost` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password (optional) | `""` (empty) |
-| `ENVIRONMENT` | Environment type | `development` |
-| `JWT_SECRET` | JWT signing secret | **required** |
-| `JWT_ACCESS_EXPIRY` | Access token expiry | `15m` |
-| `JWT_REFRESH_EXPIRY` | Refresh token expiry | `168h` |
+See [`.env.example`](.env.example) for all configuration options with detailed documentation.
 
-**Note:** `ENVIRONMENT` accepts: `development`, `staging`, `production`
+Key configuration groups:
+
+- **Database**: PostgreSQL connection settings
+- **Redis**: Session store configuration
+- **JWT**: Token signing and expiry settings
+- **Cookie**: HttpOnly cookie configuration for secure auth
+- **Server**: Port, environment, logging
+- **CORS**: Allowed origins for cross-origin requests
 
 ## Security
+
+### Cookie-Based Authentication
+
+Authentication tokens are stored in httpOnly cookies to prevent XSS attacks.
+Tokens are not exposed to JavaScript and are automatically sent with requests.
+
+| Setting | Development | Production |
+| ------- | ----------- | ---------- |
+| `COOKIE_DOMAIN` | `""` (localhost) | `.yourdomain.com` |
+| `COOKIE_SECURE` | `false` | `true` (HTTPS only) |
+| `COOKIE_SAMESITE` | `Lax` | `Strict` |
 
 ### Redis TLS
 
