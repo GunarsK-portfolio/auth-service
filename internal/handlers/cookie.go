@@ -11,10 +11,6 @@ const (
 	// Cookie names
 	AccessTokenCookie  = "access_token"
 	RefreshTokenCookie = "refresh_token"
-
-	// RefreshTokenPath restricts refresh token cookie to refresh endpoint only
-	// This limits exposure surface - refresh token isn't sent with every request
-	RefreshTokenPath = "/api/v1/auth/refresh" //nolint:gosec // G101: This is a URL path, not credentials
 )
 
 // CookieHelper manages authentication cookies.
@@ -28,16 +24,16 @@ func NewCookieHelper(config common.CookieConfig) *CookieHelper {
 }
 
 // SetAuthCookies sets both access and refresh token cookies.
-// Access token uses config.Path (typically "/"), refresh token uses restricted path.
+// Access token uses config.Path (typically "/"), refresh token uses config.RefreshPath.
 func (h *CookieHelper) SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessExpiry, refreshExpiry time.Duration) {
 	h.setCookie(c, AccessTokenCookie, accessToken, int(accessExpiry.Seconds()), h.config.Path)
-	h.setCookie(c, RefreshTokenCookie, refreshToken, int(refreshExpiry.Seconds()), RefreshTokenPath)
+	h.setCookie(c, RefreshTokenCookie, refreshToken, int(refreshExpiry.Seconds()), h.config.RefreshPath)
 }
 
 // ClearAuthCookies removes both authentication cookies.
 func (h *CookieHelper) ClearAuthCookies(c *gin.Context) {
 	h.setCookie(c, AccessTokenCookie, "", -1, h.config.Path)
-	h.setCookie(c, RefreshTokenCookie, "", -1, RefreshTokenPath)
+	h.setCookie(c, RefreshTokenCookie, "", -1, h.config.RefreshPath)
 }
 
 // GetAccessToken retrieves the access token from cookie.
