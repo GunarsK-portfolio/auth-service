@@ -141,10 +141,36 @@ func TestClearAuthCookies(t *testing.T) {
 		return
 	}
 
+	var accessCookie, refreshCookie *http.Cookie
 	for _, cookie := range cookies {
-		if cookie.MaxAge != -1 {
-			t.Errorf("Cookie %s should have MaxAge=-1, got %d", cookie.Name, cookie.MaxAge)
+		if cookie.Name == "access_token" {
+			accessCookie = cookie
 		}
+		if cookie.Name == "refresh_token" {
+			refreshCookie = cookie
+		}
+	}
+
+	if accessCookie == nil {
+		t.Error("access_token cookie not found")
+		return
+	}
+	if accessCookie.MaxAge != -1 {
+		t.Errorf("access_token MaxAge = %d, want -1", accessCookie.MaxAge)
+	}
+	if accessCookie.Path != "/" {
+		t.Errorf("access_token Path = %s, want /", accessCookie.Path)
+	}
+
+	if refreshCookie == nil {
+		t.Error("refresh_token cookie not found")
+		return
+	}
+	if refreshCookie.MaxAge != -1 {
+		t.Errorf("refresh_token MaxAge = %d, want -1", refreshCookie.MaxAge)
+	}
+	if refreshCookie.Path != "/auth/v1/refresh" {
+		t.Errorf("refresh_token Path = %s, want /auth/v1/refresh", refreshCookie.Path)
 	}
 }
 
