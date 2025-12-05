@@ -23,10 +23,11 @@ func TestSetAuthCookies(t *testing.T) {
 		{
 			name: "development config",
 			cookieConfig: common.CookieConfig{
-				Domain:   "",
-				Secure:   false,
-				SameSite: http.SameSiteLaxMode,
-				Path:     "/",
+				Domain:      "",
+				Secure:      false,
+				SameSite:    http.SameSiteLaxMode,
+				Path:        "/",
+				RefreshPath: "/auth/v1/refresh",
 			},
 			wantSecure:   false,
 			wantSameSite: http.SameSiteLaxMode,
@@ -35,10 +36,11 @@ func TestSetAuthCookies(t *testing.T) {
 		{
 			name: "production config",
 			cookieConfig: common.CookieConfig{
-				Domain:   ".gunarsk.com",
-				Secure:   true,
-				SameSite: http.SameSiteStrictMode,
-				Path:     "/",
+				Domain:      ".gunarsk.com",
+				Secure:      true,
+				SameSite:    http.SameSiteStrictMode,
+				Path:        "/",
+				RefreshPath: "/api/v1/auth/refresh",
 			},
 			wantSecure:   true,
 			wantSameSite: http.SameSiteStrictMode,
@@ -109,9 +111,9 @@ func TestSetAuthCookies(t *testing.T) {
 			if refreshCookie.SameSite != tt.wantSameSite {
 				t.Errorf("refresh_token SameSite = %v, want %v", refreshCookie.SameSite, tt.wantSameSite)
 			}
-			// Refresh token uses restricted path for security (not config.Path)
-			if refreshCookie.Path != RefreshTokenPath {
-				t.Errorf("refresh_token Path = %s, want %s", refreshCookie.Path, RefreshTokenPath)
+			// Refresh token uses config.RefreshPath for security (not config.Path)
+			if refreshCookie.Path != tt.cookieConfig.RefreshPath {
+				t.Errorf("refresh_token Path = %s, want %s", refreshCookie.Path, tt.cookieConfig.RefreshPath)
 			}
 			if refreshCookie.Domain != tt.wantDomain {
 				t.Errorf("refresh_token Domain = %s, want %s", refreshCookie.Domain, tt.wantDomain)
@@ -126,19 +128,49 @@ func TestClearAuthCookies(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	helper := NewCookieHelper(common.CookieConfig{Path: "/"})
+	helper := NewCookieHelper(common.CookieConfig{
+		Path:        "/",
+		RefreshPath: "/auth/v1/refresh",
+	})
 	helper.ClearAuthCookies(c)
 
 	cookies := w.Result().Cookies()
+	// Expect 2 cookies: access_token at Path, refresh_token at RefreshPath
 	if len(cookies) != 2 {
 		t.Errorf("expected 2 cookies, got %d", len(cookies))
 		return
 	}
 
+	var accessCookie, refreshCookie *http.Cookie
 	for _, cookie := range cookies {
-		if cookie.MaxAge != -1 {
-			t.Errorf("Cookie %s should have MaxAge=-1, got %d", cookie.Name, cookie.MaxAge)
+		if cookie.Name == "access_token" {
+			accessCookie = cookie
 		}
+		if cookie.Name == "refresh_token" {
+			refreshCookie = cookie
+		}
+	}
+
+	if accessCookie == nil {
+		t.Error("access_token cookie not found")
+		return
+	}
+	if accessCookie.MaxAge != -1 {
+		t.Errorf("access_token MaxAge = %d, want -1", accessCookie.MaxAge)
+	}
+	if accessCookie.Path != "/" {
+		t.Errorf("access_token Path = %s, want /", accessCookie.Path)
+	}
+
+	if refreshCookie == nil {
+		t.Error("refresh_token cookie not found")
+		return
+	}
+	if refreshCookie.MaxAge != -1 {
+		t.Errorf("refresh_token MaxAge = %d, want -1", refreshCookie.MaxAge)
+	}
+	if refreshCookie.Path != "/auth/v1/refresh" {
+		t.Errorf("refresh_token Path = %s, want /auth/v1/refresh", refreshCookie.Path)
 	}
 }
 
