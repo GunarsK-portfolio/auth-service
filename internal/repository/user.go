@@ -76,7 +76,7 @@ func (r *userRepository) GetUserScopes(ctx context.Context, userID int64) (map[s
 	}
 
 	if user.RoleID == nil {
-		return nil, nil
+		return make(map[string]string), nil
 	}
 
 	var results []models.ScopeResult

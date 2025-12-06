@@ -54,10 +54,11 @@ type ValidateRequest struct {
 
 // LoginResponse is the response body for login (tokens are in httpOnly cookies).
 type LoginResponse struct {
-	Success   bool   `json:"success"`
-	ExpiresIn int64  `json:"expires_in"`
-	UserID    int64  `json:"user_id,omitempty"`
-	Username  string `json:"username,omitempty"`
+	Success   bool              `json:"success"`
+	ExpiresIn int64             `json:"expires_in"`
+	UserID    int64             `json:"user_id,omitempty"`
+	Username  string            `json:"username,omitempty"`
+	Scopes    map[string]string `json:"scopes,omitempty"`
 }
 
 // Login godoc
@@ -105,11 +106,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		"username": response.Username,
 	})
 
+	// Parse scopes from access token for frontend
+	var scopes map[string]string
+	if claims, err := h.jwtService.ValidateToken(response.AccessToken); err == nil {
+		scopes = claims.Scopes
+	}
+
 	c.JSON(http.StatusOK, LoginResponse{
 		Success:   true,
 		ExpiresIn: response.ExpiresIn,
 		UserID:    response.UserID,
 		Username:  response.Username,
+		Scopes:    scopes,
 	})
 }
 
@@ -230,8 +238,9 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 
 // TokenStatusResponse represents the token status response.
 type TokenStatusResponse struct {
-	Valid      bool  `json:"valid"`
-	TTLSeconds int64 `json:"ttl_seconds"`
+	Valid      bool              `json:"valid"`
+	TTLSeconds int64             `json:"ttl_seconds"`
+	Scopes     map[string]string `json:"scopes,omitempty"`
 }
 
 // TokenStatus godoc
@@ -254,7 +263,7 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 		return
 	}
 
-	ttl, err := h.authService.ValidateToken(token)
+	ttl, claims, err := h.authService.ValidateTokenWithClaims(token)
 	if err != nil || ttl <= 0 {
 		c.JSON(http.StatusUnauthorized, TokenStatusResponse{Valid: false, TTLSeconds: 0})
 		return
@@ -263,6 +272,7 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, TokenStatusResponse{
 		Valid:      true,
 		TTLSeconds: ttl,
+		Scopes:     claims.Scopes,
 	})
 }
 

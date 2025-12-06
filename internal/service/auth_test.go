@@ -18,6 +18,9 @@ const (
 	testSecret        = "this-is-a-test-secret-with-32-bytes!"
 	testAccessExpiry  = 15 * time.Minute
 	testRefreshExpiry = 168 * time.Hour
+	// jwtTimestampBuffer ensures JWT tokens have different IssuedAt timestamps.
+	// JWT timestamps have 1-second resolution, so we sleep just over 1 second.
+	jwtTimestampBuffer = 1001 * time.Millisecond
 )
 
 // =============================================================================
@@ -455,7 +458,7 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 	}
 
 	// Sleep to ensure different IssuedAt timestamp
-	time.Sleep(1001 * time.Millisecond)
+	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh token
 	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
@@ -608,7 +611,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	oldRefreshToken := loginResult.RefreshToken
 
 	// Sleep to ensure different IssuedAt timestamp (JWT timestamps are in seconds)
-	time.Sleep(1001 * time.Millisecond)
+	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh token
 	result, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
@@ -703,7 +706,7 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
-	time.Sleep(1001 * time.Millisecond) // Ensure different IssuedAt
+	time.Sleep(jwtTimestampBuffer) // Ensure different IssuedAt
 	token2, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)

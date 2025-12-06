@@ -72,7 +72,8 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 	// Get user scopes from role
 	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user scopes: %w", err)
+		// Return generic error to prevent user enumeration
+		return nil, ErrInvalidCredentials
 	}
 
 	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username, scopes)
@@ -125,7 +126,10 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 		return nil, errors.New("invalid refresh token")
 	}
 
-	// Generate new tokens using scopes from refresh token
+	// Generate new tokens using scopes from refresh token.
+	// Note: Scopes may become stale if user's role changes between refreshes.
+	// This is an intentional trade-off to avoid a database lookup on every refresh.
+	// Users must re-login to get updated scopes after role changes.
 	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username, claims.Scopes)
 	if err != nil {
 		return nil, err
