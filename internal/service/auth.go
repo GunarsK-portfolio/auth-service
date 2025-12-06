@@ -28,11 +28,12 @@ type LoginRequest struct {
 
 // LoginResponse contains JWT tokens returned after successful login.
 type LoginResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	UserID       int64  `json:"-"` // Not exposed in JSON, only for internal use
-	Username     string `json:"-"` // Not exposed in JSON, only for internal use
+	AccessToken  string            `json:"access_token"`
+	RefreshToken string            `json:"refresh_token"`
+	ExpiresIn    int64             `json:"expires_in"`
+	UserID       int64             `json:"-"` // Not exposed in JSON, only for internal use
+	Username     string            `json:"-"` // Not exposed in JSON, only for internal use
+	Scopes       map[string]string `json:"-"` // Not exposed in JSON, only for internal use
 }
 
 // AuthService defines authentication operations.
@@ -97,6 +98,7 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
 		UserID:       user.ID,
 		Username:     user.Username,
+		Scopes:       scopes,
 	}, nil
 }
 

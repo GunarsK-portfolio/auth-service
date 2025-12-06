@@ -329,6 +329,7 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 				ExpiresIn:    900,
 				UserID:       1,
 				Username:     "admin",
+				Scopes:       map[string]string{"profile": "edit", "projects": "delete"},
 			}, nil
 		},
 	}
@@ -702,7 +703,7 @@ func TestTokenStatus_Success_Header(t *testing.T) {
 			return 600, &jwt.Claims{
 				UserID:   1,
 				Username: "testuser",
-				Scopes:   map[string]string{},
+				Scopes:   map[string]string{"profile": "edit", "projects": "read"},
 			}, nil
 		},
 	}
@@ -719,6 +720,19 @@ func TestTokenStatus_Success_Header(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var response TokenStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify scopes are returned for header-based auth (symmetry with cookie test)
+	if response.Scopes["profile"] != "edit" {
+		t.Errorf("expected scopes[profile]=edit, got %s", response.Scopes["profile"])
+	}
+	if response.Scopes["projects"] != "read" {
+		t.Errorf("expected scopes[projects]=read, got %s", response.Scopes["projects"])
 	}
 }
 

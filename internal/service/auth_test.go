@@ -485,6 +485,69 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 	}
 }
 
+// TestRefreshToken_ScopesNotRefetched demonstrates that role changes don't take
+// effect until user re-authenticates. This is an intentional trade-off to avoid
+// a database lookup on every refresh.
+func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	initialScopes := map[string]string{
+		"profile":  "read",
+		"projects": "read",
+	}
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return initialScopes, nil
+	}
+
+	// Login with initial scopes
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Simulate role change: user now has elevated permissions
+	// (In real scenario, admin updates user's role in database)
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return map[string]string{
+			"profile":  "delete",
+			"projects": "delete",
+		}, nil
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Refresh token - should preserve ORIGINAL scopes, not new ones
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	claims, err := service.jwtService.ValidateToken(refreshResult.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	// Scopes should still be the original "read" values, NOT "delete"
+	if claims.Scopes["profile"] != "read" {
+		t.Errorf("Scopes[profile] = %s, want read (original value, not refreshed from DB)", claims.Scopes["profile"])
+	}
+
+	if claims.Scopes["projects"] != "read" {
+		t.Errorf("Scopes[projects] = %s, want read (original value, not refreshed from DB)", claims.Scopes["projects"])
+	}
+}
+
 // =============================================================================
 // Logout Tests
 // =============================================================================

@@ -106,18 +106,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		"username": response.Username,
 	})
 
-	// Parse scopes from access token for frontend
-	var scopes map[string]string
-	if claims, err := h.jwtService.ValidateToken(response.AccessToken); err == nil {
-		scopes = claims.Scopes
-	}
-
 	c.JSON(http.StatusOK, LoginResponse{
 		Success:   true,
 		ExpiresIn: response.ExpiresIn,
 		UserID:    response.UserID,
 		Username:  response.Username,
-		Scopes:    scopes,
+		Scopes:    response.Scopes,
 	})
 }
 
