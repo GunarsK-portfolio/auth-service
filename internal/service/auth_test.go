@@ -30,6 +30,7 @@ type mockUserRepository struct {
 	findByIDFunc       func(ctx context.Context, id int64) (*models.User, error)
 	createFunc         func(ctx context.Context, user *models.User) error
 	updateFunc         func(ctx context.Context, user *models.User) error
+	getUserScopesFunc  func(ctx context.Context, userID int64) (map[string]string, error)
 }
 
 func (m *mockUserRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
@@ -65,6 +66,14 @@ func (m *mockUserRepository) Update(ctx context.Context, user *models.User) erro
 		return m.updateFunc(ctx, user)
 	}
 	return errors.New("not implemented")
+}
+
+func (m *mockUserRepository) GetUserScopes(ctx context.Context, userID int64) (map[string]string, error) {
+	if m.getUserScopesFunc != nil {
+		return m.getUserScopesFunc(ctx, userID)
+	}
+	// Default: return nil scopes (user without role)
+	return nil, nil
 }
 
 // =============================================================================
@@ -309,6 +318,171 @@ func TestLogin_ContextCancellation(t *testing.T) {
 }
 
 // =============================================================================
+// Scopes Tests
+// =============================================================================
+
+func TestLogin_WithScopes(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	testScopes := map[string]string{
+		"profile":  "edit",
+		"projects": "delete",
+	}
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return testScopes, nil
+	}
+
+	result, err := service.Login(context.Background(), "testuser", "testpassword")
+
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Validate access token contains scopes
+	claims, err := service.jwtService.ValidateToken(result.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	if len(claims.Scopes) != 2 {
+		t.Errorf("Access token scopes count = %d, want 2", len(claims.Scopes))
+	}
+
+	if claims.Scopes["profile"] != "edit" {
+		t.Errorf("Access token scopes[profile] = %s, want edit", claims.Scopes["profile"])
+	}
+
+	if claims.Scopes["projects"] != "delete" {
+		t.Errorf("Access token scopes[projects] = %s, want delete", claims.Scopes["projects"])
+	}
+}
+
+func TestLogin_WithNilScopes(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	// getUserScopesFunc returns nil by default (user without role)
+
+	result, err := service.Login(context.Background(), "testuser", "testpassword")
+
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Validate access token has nil/empty scopes
+	claims, err := service.jwtService.ValidateToken(result.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	if len(claims.Scopes) != 0 {
+		t.Errorf("Access token scopes = %v, want nil or empty", claims.Scopes)
+	}
+}
+
+func TestLogin_GetUserScopesError(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return nil, errors.New("database error")
+	}
+
+	_, err := service.Login(context.Background(), "testuser", "testpassword")
+
+	if err == nil {
+		t.Error("Login() should fail when GetUserScopes fails")
+	}
+}
+
+func TestRefreshToken_PreservesScopes(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	testScopes := map[string]string{
+		"profile":  "edit",
+		"projects": "read",
+	}
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return testScopes, nil
+	}
+
+	// Login to get tokens with scopes
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Sleep to ensure different IssuedAt timestamp
+	time.Sleep(1001 * time.Millisecond)
+
+	// Refresh token
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	// Validate new access token preserves scopes
+	claims, err := service.jwtService.ValidateToken(refreshResult.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	if len(claims.Scopes) != 2 {
+		t.Errorf("Refreshed access token scopes count = %d, want 2", len(claims.Scopes))
+	}
+
+	if claims.Scopes["profile"] != "edit" {
+		t.Errorf("Refreshed access token scopes[profile] = %s, want edit", claims.Scopes["profile"])
+	}
+
+	if claims.Scopes["projects"] != "read" {
+		t.Errorf("Refreshed access token scopes[projects] = %s, want read", claims.Scopes["projects"])
+	}
+}
+
+// =============================================================================
 // Logout Tests
 // =============================================================================
 
@@ -372,7 +546,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -392,7 +566,7 @@ func TestLogout_RedisFailure(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 
 	// Generate valid token
-	token, err := service.jwtService.GenerateAccessToken(1, "testuser")
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -484,7 +658,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate refresh token
-	token, err := jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -508,7 +682,7 @@ func TestRefreshToken_NotInRedis(t *testing.T) {
 	defer mr.Close()
 
 	// Generate valid token but don't store in Redis
-	token, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -525,12 +699,12 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 	defer mr.Close()
 
 	// Generate two different tokens
-	token1, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token1, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 	time.Sleep(1001 * time.Millisecond) // Ensure different IssuedAt
-	token2, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token2, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -549,7 +723,7 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 
 	// Generate valid token and store in Redis
-	token, err := service.jwtService.GenerateRefreshToken(1, "testuser")
+	token, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -573,7 +747,7 @@ func TestAuthValidateToken_ValidToken(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	token, err := service.jwtService.GenerateAccessToken(1, "testuser")
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -620,7 +794,7 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -650,7 +824,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 	service := NewAuthService(mockRepo, jwtService, redisClient).(*authService)
 
 	// Generate token
-	token, err := jwtService.GenerateAccessToken(1, "testuser")
+	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}

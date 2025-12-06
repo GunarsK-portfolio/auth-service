@@ -36,12 +36,13 @@ go test -v -run TestLogin ./internal/service/
 
 ## Test Files
 
-**`internal/service/auth_test.go`** - 23 tests
+**`internal/service/auth_test.go`** - 27 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
 | Constructor | 2 | Service initialization, interface compliance |
 | Login | 7 | Success, user not found, wrong password, empty credentials, Redis/context errors |
+| Scopes | 4 | Login with scopes, login with nil scopes, GetUserScopes error, refresh preserves scopes |
 | Logout | 4 | Success, invalid/expired token, Redis failure |
 | Refresh Token | 6 | Success, invalid/expired token, not in Redis, mismatch, Redis failure |
 | Validate Token | 4 | Valid token, invalid token, expired token, almost-expired |
@@ -102,6 +103,11 @@ mockRepo := &mockUserRepository{
             Username:     "testuser",
             PasswordHash: hashedPassword,
         }, nil
+    },
+    getUserScopesFunc: func(
+        ctx context.Context, userID int64,
+    ) (map[string]string, error) {
+        return map[string]string{"profile": "edit"}, nil
     },
 }
 ```
@@ -178,16 +184,17 @@ The auth-service is an HTTP API (not a worker):
 
 ### Authentication Flow
 
-1. **Login**: Validate credentials → Generate tokens → Store in Redis → Set cookies
-2. **Refresh**: Validate cookie → Check Redis → Rotate tokens → Set cookies
+1. **Login**: Validate credentials → Fetch scopes → Generate tokens → Set cookies
+2. **Refresh**: Validate cookie → Check Redis → Use scopes from token → Set cookies
 3. **Logout**: Parse token → Delete from Redis → Clear cookies
-4. **Validate**: Parse token → Verify signature → Return TTL
+4. **Validate**: Parse token → Verify signature → Return TTL and claims
 
 ### Token Management
 
-- Access tokens: Short-lived (15m default), httpOnly cookie
-- Refresh tokens: Long-lived (7d default), stored in Redis
-- Token rotation: Refresh generates new pair, invalidates old
+- Access tokens: Short-lived (15m default), httpOnly cookie, includes scopes
+- Refresh tokens: Long-lived (7d default), stored in Redis, includes scopes
+- Token rotation: Refresh generates new pair, invalidates old, preserves scopes
+- Scopes: Fetched from DB on login only (no DB hit on refresh)
 
 ## Contributing Tests
 

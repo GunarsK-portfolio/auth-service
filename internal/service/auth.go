@@ -69,12 +69,18 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		return nil, ErrInvalidCredentials
 	}
 
-	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username)
+	// Get user scopes from role
+	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user scopes: %w", err)
+	}
+
+	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username, scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Username)
+	refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Username, scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +125,13 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 		return nil, errors.New("invalid refresh token")
 	}
 
-	// Generate new tokens
-	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username)
+	// Generate new tokens using scopes from refresh token
+	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username, claims.Scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	newRefreshToken, err := s.jwtService.GenerateRefreshToken(claims.UserID, claims.Username)
+	newRefreshToken, err := s.jwtService.GenerateRefreshToken(claims.UserID, claims.Username, claims.Scopes)
 	if err != nil {
 		return nil, err
 	}

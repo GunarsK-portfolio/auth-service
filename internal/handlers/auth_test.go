@@ -74,11 +74,11 @@ func (m *mockJWTService) ValidateToken(tokenString string) (*jwt.Claims, error) 
 	return nil, nil
 }
 
-func (m *mockJWTService) GenerateAccessToken(userID int64, username string) (string, error) {
+func (m *mockJWTService) GenerateAccessToken(userID int64, username string, scopes map[string]string) (string, error) {
 	return "access_token", nil
 }
 
-func (m *mockJWTService) GenerateRefreshToken(userID int64, username string) (string, error) {
+func (m *mockJWTService) GenerateRefreshToken(userID int64, username string, scopes map[string]string) (string, error) {
 	return "refresh_token", nil
 }
 
