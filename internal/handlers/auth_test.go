@@ -71,14 +71,18 @@ type mockJWTService struct {
 }
 
 func (m *mockJWTService) ValidateToken(tokenString string) (*jwt.Claims, error) {
-	return nil, nil
+	return &jwt.Claims{
+		UserID:   1,
+		Username: "testuser",
+		Scopes:   map[string]string{},
+	}, nil
 }
 
-func (m *mockJWTService) GenerateAccessToken(userID int64, username string) (string, error) {
+func (m *mockJWTService) GenerateAccessToken(userID int64, username string, scopes map[string]string) (string, error) {
 	return "access_token", nil
 }
 
-func (m *mockJWTService) GenerateRefreshToken(userID int64, username string) (string, error) {
+func (m *mockJWTService) GenerateRefreshToken(userID int64, username string, scopes map[string]string) (string, error) {
 	return "refresh_token", nil
 }
 
@@ -88,6 +92,35 @@ func (m *mockJWTService) GetAccessExpiry() time.Duration {
 
 func (m *mockJWTService) GetRefreshExpiry() time.Duration {
 	return m.refreshExpiry
+}
+
+// mockJWTServiceWithScopes returns specific scopes when validating tokens
+type mockJWTServiceWithScopes struct {
+	scopes map[string]string
+}
+
+func (m *mockJWTServiceWithScopes) ValidateToken(tokenString string) (*jwt.Claims, error) {
+	return &jwt.Claims{
+		UserID:   1,
+		Username: "testuser",
+		Scopes:   m.scopes,
+	}, nil
+}
+
+func (m *mockJWTServiceWithScopes) GenerateAccessToken(userID int64, username string, scopes map[string]string) (string, error) {
+	return "access_token", nil
+}
+
+func (m *mockJWTServiceWithScopes) GenerateRefreshToken(userID int64, username string, scopes map[string]string) (string, error) {
+	return "refresh_token", nil
+}
+
+func (m *mockJWTServiceWithScopes) GetAccessExpiry() time.Duration {
+	return 15 * time.Minute
+}
+
+func (m *mockJWTServiceWithScopes) GetRefreshExpiry() time.Duration {
+	return 7 * 24 * time.Hour
 }
 
 type mockActionLogRepository struct{}
@@ -284,6 +317,60 @@ func TestLogin_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestLogin_ReturnsScopesFromToken(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+			return &service.LoginResponse{
+				AccessToken:  "access_token_with_scopes",
+				RefreshToken: "refresh_token_456",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "admin",
+				Scopes:       map[string]string{"profile": "edit", "projects": "delete"},
+			}, nil
+		},
+	}
+
+	// Create handler with custom JWT service that returns scopes
+	cookieHelper := NewCookieHelper(common.CookieConfig{
+		Path:     "/",
+		Domain:   "",
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	})
+	jwtService := &mockJWTServiceWithScopes{
+		scopes: map[string]string{"profile": "edit", "projects": "delete"},
+	}
+	actionLogRepo := &mockActionLogRepository{}
+	handler := NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService)
+
+	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
+		Username: "admin",
+		Password: "password123",
+	})
+
+	handler.Login(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var response LoginResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if response.Scopes == nil {
+		t.Fatal("expected scopes to be returned")
+	}
+	if response.Scopes["profile"] != "edit" {
+		t.Errorf("expected scopes[profile]=edit, got %s", response.Scopes["profile"])
+	}
+	if response.Scopes["projects"] != "delete" {
+		t.Errorf("expected scopes[projects]=delete, got %s", response.Scopes["projects"])
 	}
 }
 
@@ -568,8 +655,12 @@ func TestValidate_MissingToken(t *testing.T) {
 
 func TestTokenStatus_Success_Cookie(t *testing.T) {
 	mockService := &mockAuthService{
-		validateTokenFunc: func(token string) (int64, error) {
-			return 600, nil
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
+			return 600, &jwt.Claims{
+				UserID:   1,
+				Username: "testuser",
+				Scopes:   map[string]string{"profile": "edit"},
+			}, nil
 		},
 	}
 
@@ -598,15 +689,22 @@ func TestTokenStatus_Success_Cookie(t *testing.T) {
 	if response.TTLSeconds != 600 {
 		t.Errorf("expected TTLSeconds=600, got %d", response.TTLSeconds)
 	}
+	if response.Scopes["profile"] != "edit" {
+		t.Errorf("expected scopes[profile]=edit, got %v", response.Scopes)
+	}
 }
 
 func TestTokenStatus_Success_Header(t *testing.T) {
 	mockService := &mockAuthService{
-		validateTokenFunc: func(token string) (int64, error) {
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
 			if token != "header_token" {
 				t.Errorf("expected token=header_token, got %s", token)
 			}
-			return 600, nil
+			return 600, &jwt.Claims{
+				UserID:   1,
+				Username: "testuser",
+				Scopes:   map[string]string{"profile": "edit", "projects": "read"},
+			}, nil
 		},
 	}
 
@@ -622,6 +720,19 @@ func TestTokenStatus_Success_Header(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var response TokenStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify scopes are returned for header-based auth (symmetry with cookie test)
+	if response.Scopes["profile"] != "edit" {
+		t.Errorf("expected scopes[profile]=edit, got %s", response.Scopes["profile"])
+	}
+	if response.Scopes["projects"] != "read" {
+		t.Errorf("expected scopes[projects]=read, got %s", response.Scopes["projects"])
 	}
 }
 
@@ -652,8 +763,8 @@ func TestTokenStatus_NoToken(t *testing.T) {
 
 func TestTokenStatus_InvalidToken(t *testing.T) {
 	mockService := &mockAuthService{
-		validateTokenFunc: func(token string) (int64, error) {
-			return 0, errors.New("invalid token")
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
+			return 0, nil, errors.New("invalid token")
 		},
 	}
 
@@ -674,8 +785,8 @@ func TestTokenStatus_InvalidToken(t *testing.T) {
 
 func TestTokenStatus_ExpiredToken(t *testing.T) {
 	mockService := &mockAuthService{
-		validateTokenFunc: func(token string) (int64, error) {
-			return 0, nil // TTL=0 means expired
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
+			return 0, &jwt.Claims{}, nil // TTL=0 means expired
 		},
 	}
 
@@ -801,9 +912,13 @@ func TestLogout_CookiePriorityOverHeader(t *testing.T) {
 func TestTokenStatus_CookiePriorityOverHeader(t *testing.T) {
 	var receivedToken string
 	mockService := &mockAuthService{
-		validateTokenFunc: func(token string) (int64, error) {
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
 			receivedToken = token
-			return 600, nil
+			return 600, &jwt.Claims{
+				UserID:   1,
+				Username: "testuser",
+				Scopes:   map[string]string{},
+			}, nil
 		},
 	}
 

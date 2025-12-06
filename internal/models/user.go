@@ -9,6 +9,7 @@ type User struct {
 	Username     string    `json:"username" gorm:"uniqueIndex;not null"`
 	Email        string    `json:"email" gorm:"uniqueIndex;not null"`
 	PasswordHash string    `json:"-" gorm:"not null"`
+	RoleID       *int      `json:"role_id" gorm:"column:role_id"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

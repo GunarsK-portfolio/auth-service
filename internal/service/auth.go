@@ -28,11 +28,12 @@ type LoginRequest struct {
 
 // LoginResponse contains JWT tokens returned after successful login.
 type LoginResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	UserID       int64  `json:"-"` // Not exposed in JSON, only for internal use
-	Username     string `json:"-"` // Not exposed in JSON, only for internal use
+	AccessToken  string            `json:"access_token"`
+	RefreshToken string            `json:"refresh_token"`
+	ExpiresIn    int64             `json:"expires_in"`
+	UserID       int64             `json:"-"` // Not exposed in JSON, only for internal use
+	Username     string            `json:"-"` // Not exposed in JSON, only for internal use
+	Scopes       map[string]string `json:"-"` // Not exposed in JSON, only for internal use
 }
 
 // AuthService defines authentication operations.
@@ -69,12 +70,19 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		return nil, ErrInvalidCredentials
 	}
 
-	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username)
+	// Get user scopes from role
+	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
+	if err != nil {
+		// Return generic error to prevent user enumeration
+		return nil, ErrInvalidCredentials
+	}
+
+	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username, scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Username)
+	refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Username, scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +98,7 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
 		UserID:       user.ID,
 		Username:     user.Username,
+		Scopes:       scopes,
 	}, nil
 }
 
@@ -119,13 +128,16 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 		return nil, errors.New("invalid refresh token")
 	}
 
-	// Generate new tokens
-	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username)
+	// Generate new tokens using scopes from refresh token.
+	// Note: Scopes may become stale if user's role changes between refreshes.
+	// This is an intentional trade-off to avoid a database lookup on every refresh.
+	// Users must re-login to get updated scopes after role changes.
+	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username, claims.Scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	newRefreshToken, err := s.jwtService.GenerateRefreshToken(claims.UserID, claims.Username)
+	newRefreshToken, err := s.jwtService.GenerateRefreshToken(claims.UserID, claims.Username, claims.Scopes)
 	if err != nil {
 		return nil, err
 	}

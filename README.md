@@ -10,8 +10,9 @@ JWT-based authentication service with refresh token support.
 ## Features
 
 - User registration and login
-- JWT access and refresh tokens
-- Token refresh endpoint
+- JWT access and refresh tokens with RBAC scopes
+- Role-based access control (RBAC) with hierarchical permissions
+- Token refresh endpoint (scopes preserved from refresh token)
 - Redis-based session management
 - Password hashing with bcrypt
 - RESTful API with Swagger documentation
@@ -258,6 +259,46 @@ task build
 # or
 go build -o bin/auth cmd/api/main.go
 ```
+
+## RBAC (Role-Based Access Control)
+
+Users can be assigned roles, and roles define permissions (scopes) for resources.
+
+### Permission Levels
+
+Hierarchical permission levels: `none` < `read` < `edit` < `delete`
+
+- **none**: No access
+- **read**: View only
+- **edit**: View and modify
+- **delete**: Full access (view, modify, delete)
+
+### How It Works
+
+1. **Login**: User's role scopes are fetched from DB and embedded in JWT tokens
+2. **Refresh**: Scopes are preserved from the refresh token (no DB query needed)
+3. **Role Changes**: Take effect on next login (not during active session)
+
+### Token Claims
+
+```json
+{
+  "user_id": 1,
+  "username": "admin",
+  "scopes": {
+    "profile": "edit",
+    "projects": "delete",
+    "skills": "read"
+  },
+  "exp": 1234567890
+}
+```
+
+### Database Tables
+
+- `auth.roles` - Role definitions (admin, viewer, etc.)
+- `auth.resources` - Protected resources (profile, projects, etc.)
+- `auth.role_scopes` - Maps roles to resources with permission levels
 
 ## Integration
 
