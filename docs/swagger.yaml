@@ -14,6 +14,10 @@ definitions:
     properties:
       expires_in:
         type: integer
+      scopes:
+        additionalProperties:
+          type: string
+        type: object
       success:
         type: boolean
       user_id:
@@ -23,8 +27,14 @@ definitions:
     type: object
   handlers.TokenStatusResponse:
     properties:
+      scopes:
+        additionalProperties:
+          type: string
+        type: object
       ttl_seconds:
         type: integer
+      username:
+        type: string
       valid:
         type: boolean
     type: object

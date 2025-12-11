@@ -236,6 +236,12 @@ const docTemplate = `{
                 "expires_in": {
                     "type": "integer"
                 },
+                "scopes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "success": {
                     "type": "boolean"
                 },
@@ -250,8 +256,17 @@ const docTemplate = `{
         "handlers.TokenStatusResponse": {
             "type": "object",
             "properties": {
+                "scopes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "ttl_seconds": {
                     "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 },
                 "valid": {
                     "type": "boolean"
