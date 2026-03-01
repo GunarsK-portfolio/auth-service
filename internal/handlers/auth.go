@@ -67,7 +67,7 @@ type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
 	Password string `json:"password" binding:"required,min=8,max=128"`
-	RoleCode string `json:"role_code,omitempty"`
+	RoleCode string `json:"role_code,omitempty" enums:"read-only,demo-user" example:"read-only"` // Allowed: read-only, demo-user
 }
 
 // RegisterResponse is the response body for registration.
@@ -86,6 +86,7 @@ type RegisterResponse struct {
 // @Param request body RegisterRequest true "Registration data"
 // @Success 201 {object} RegisterResponse
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {

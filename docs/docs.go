@@ -170,6 +170,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "409": {
                         "description": "Conflict",
                         "schema": {
@@ -324,7 +333,13 @@ const docTemplate = `{
                     "minLength": 8
                 },
                 "role_code": {
-                    "type": "string"
+                    "description": "Allowed: read-only, demo-user",
+                    "type": "string",
+                    "enum": [
+                        "read-only",
+                        "demo-user"
+                    ],
+                    "example": "read-only"
                 },
                 "username": {
                     "type": "string",

@@ -36,6 +36,11 @@ definitions:
         minLength: 8
         type: string
       role_code:
+        description: 'Allowed: read-only, demo-user'
+        enum:
+        - read-only
+        - demo-user
+        example: read-only
         type: string
       username:
         maxLength: 50
@@ -188,6 +193,12 @@ paths:
             $ref: '#/definitions/handlers.RegisterResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
