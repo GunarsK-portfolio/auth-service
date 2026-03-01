@@ -1350,11 +1350,32 @@ func TestRegister_Handler_UsernameTooShort(t *testing.T) {
 func TestRegister_Handler_PasswordTooLong(t *testing.T) {
 	mockService := &mockAuthService{}
 	handler := setupTestHandler(mockService)
-	longPassword := strings.Repeat("a", 129)
+	longPassword := strings.Repeat("a", 73)
 	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
 		"username": "newuser",
 		"email":    "new@example.com",
 		"password": longPassword,
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_PasswordTooLongBytes(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrPasswordTooLong
+		},
+	}
+	handler := setupTestHandler(mockService)
+	// 25 3-byte UTF-8 chars = 75 bytes but only 25 chars (passes binding max=72 char check)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": strings.Repeat("\u00e9\u00e9\u00e9", 25)[:25],
 	})
 
 	handler.Register(c)

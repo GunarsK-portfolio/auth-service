@@ -66,7 +66,7 @@ type LoginResponse struct {
 type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
-	Password string `json:"password" binding:"required,min=8,max=128"`
+	Password string `json:"password" binding:"required,min=8,max=72"`
 	RoleCode string `json:"role_code,omitempty" enums:"read-only,demo-user" example:"read-only"` // Allowed: read-only, demo-user
 }
 
@@ -88,6 +88,7 @@ type RegisterResponse struct {
 // @Failure 400 {object} map[string]string
 // @Failure 403 {object} map[string]string
 // @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
 // @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
@@ -118,9 +119,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			})
 			commonHandlers.RespondError(c, http.StatusConflict, "username or email already in use")
 		case errors.Is(err, service.ErrRoleNotAllowed):
+			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
+				"username":  req.Username,
+				"role_code": req.RoleCode,
+				"reason":    "role_not_allowed",
+			})
 			commonHandlers.RespondError(c, http.StatusForbidden, "role not allowed for self-registration")
 		case errors.Is(err, service.ErrInvalidRoleCode):
+			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
+				"username":  req.Username,
+				"role_code": req.RoleCode,
+				"reason":    "invalid_role_code",
+			})
 			commonHandlers.RespondError(c, http.StatusBadRequest, "invalid role code")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "password exceeds maximum length")
 		default:
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
 				"username": req.Username,

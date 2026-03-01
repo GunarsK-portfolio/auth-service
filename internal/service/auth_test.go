@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -1197,6 +1198,54 @@ func TestRegister_InvalidRoleCode(t *testing.T) {
 
 	if !errors.Is(err, ErrInvalidRoleCode) {
 		t.Errorf("Register() error = %v, want %v", err, ErrInvalidRoleCode)
+	}
+}
+
+func TestRegister_PasswordTooLongBytes(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	// 73 ASCII bytes exceeds bcrypt's 72-byte limit
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: strings.Repeat("a", 73),
+	})
+
+	if !errors.Is(err, ErrPasswordTooLong) {
+		t.Errorf("Register() error = %v, want ErrPasswordTooLong", err)
+	}
+}
+
+func TestRegister_PasswordExactly72Bytes(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
+		user.ID = 1
+		return nil
+	}
+
+	// Exactly 72 bytes should succeed
+	result, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: strings.Repeat("a", 72),
+	})
+
+	if err != nil {
+		t.Errorf("Register() unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Error("Register() result should not be nil")
 	}
 }
 

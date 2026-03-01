@@ -26,7 +26,8 @@ var (
 	// ErrInvalidRoleCode is returned when the provided role code doesn't exist.
 	ErrInvalidRoleCode = errors.New("invalid role code")
 	// ErrRoleNotAllowed is returned when the role code is not permitted for self-registration.
-	ErrRoleNotAllowed = errors.New("role not allowed for self-registration")
+	ErrRoleNotAllowed  = errors.New("role not allowed for self-registration")
+	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
 )
 
 // allowedSelfAssignRoles defines which roles users can assign themselves during registration.
@@ -217,6 +218,11 @@ func (s *authService) ValidateTokenWithClaims(token string) (int64, *jwt.Claims,
 }
 
 func (s *authService) Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
+	// bcrypt silently truncates passwords longer than 72 bytes
+	if len([]byte(req.Password)) > 72 {
+		return nil, ErrPasswordTooLong
+	}
+
 	// Check if username is taken
 	if _, err := s.userRepo.FindByUsername(ctx, req.Username); err == nil {
 		return nil, ErrUsernameTaken
