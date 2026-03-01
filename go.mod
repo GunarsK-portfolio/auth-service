@@ -1,6 +1,6 @@
 module github.com/GunarsK-portfolio/auth-service
 
-go 1.25.6
+go 1.25.7
 
 require (
 	github.com/GunarsK-portfolio/portfolio-common v0.40.0
