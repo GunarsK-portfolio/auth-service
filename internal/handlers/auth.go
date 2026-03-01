@@ -67,7 +67,7 @@ type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
-	RoleCode string `json:"role_code,omitempty" enums:"read-only,demo-user" example:"read-only"` // Allowed: read-only, demo-user
+	RoleCode string `json:"role_code,omitempty" example:"read-only"` // Any valid role not in denied list (default: admin, rpg-admin)
 }
 
 // RegisterResponse is the response body for registration.

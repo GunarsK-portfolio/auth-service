@@ -95,7 +95,7 @@ func main() {
 		appLogger.Error("Failed to create JWT service", "error", err)
 		log.Fatal("Failed to create JWT service:", err)
 	}
-	authService := service.NewAuthService(userRepo, jwtService, redisClient)
+	authService := service.NewAuthService(userRepo, jwtService, redisClient, cfg.DeniedSelfAssignRoles)
 
 	// Initialize cookie helper
 	cookieHelper := handlers.NewCookieHelper(cfg.CookieConfig)
