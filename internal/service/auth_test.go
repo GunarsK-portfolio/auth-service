@@ -1147,6 +1147,30 @@ func TestRegister_EmailTaken(t *testing.T) {
 	}
 }
 
+func TestRegister_RoleNotAllowed(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+		RoleCode: "admin",
+	})
+
+	if !errors.Is(err, ErrRoleNotAllowed) {
+		t.Errorf("Register() error = %v, want %v", err, ErrRoleNotAllowed)
+	}
+}
+
 func TestRegister_InvalidRoleCode(t *testing.T) {
 	service, mr, mockRepo := setupTestAuthService(t)
 	defer mr.Close()
@@ -1163,11 +1187,12 @@ func TestRegister_InvalidRoleCode(t *testing.T) {
 		return nil, gorm.ErrRecordNotFound
 	}
 
+	// Use an allowed role code that doesn't exist in the database
 	_, err := service.Register(context.Background(), RegisterRequest{
 		Username: "newuser",
 		Email:    "new@example.com",
 		Password: "password123",
-		RoleCode: "nonexistent",
+		RoleCode: "demo-user",
 	})
 
 	if !errors.Is(err, ErrInvalidRoleCode) {

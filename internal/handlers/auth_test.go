@@ -1158,8 +1158,8 @@ func TestRegister_Handler_UsernameTaken(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "username already taken") {
-		t.Errorf("expected 'username already taken' in body, got %s", body)
+	if !strings.Contains(body, "username or email already in use") {
+		t.Errorf("expected 'username or email already in use' in body, got %s", body)
 	}
 }
 
@@ -1184,8 +1184,8 @@ func TestRegister_Handler_EmailTaken(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "email already taken") {
-		t.Errorf("expected 'email already taken' in body, got %s", body)
+	if !strings.Contains(body, "username or email already in use") {
+		t.Errorf("expected 'username or email already in use' in body, got %s", body)
 	}
 }
 
@@ -1208,6 +1208,33 @@ func TestRegister_Handler_InvalidRoleCode(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_RoleNotAllowed(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrRoleNotAllowed
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username":  "newuser",
+		"email":     "new@example.com",
+		"password":  "password123",
+		"role_code": "admin",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "role not allowed for self-registration") {
+		t.Errorf("expected 'role not allowed for self-registration' in body, got %s", body)
 	}
 }
 
@@ -1295,6 +1322,39 @@ func TestRegister_Handler_UsernameTooLong(t *testing.T) {
 		"username": "this_username_is_way_too_long_and_exceeds_the_fifty_character_limit_set_by_the_database",
 		"email":    "new@example.com",
 		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_UsernameTooShort(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "ab",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_PasswordTooLong(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	longPassword := strings.Repeat("a", 129)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": longPassword,
 	})
 
 	handler.Register(c)

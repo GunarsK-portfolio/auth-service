@@ -25,7 +25,16 @@ var (
 	ErrEmailTaken = errors.New("email already taken")
 	// ErrInvalidRoleCode is returned when the provided role code doesn't exist.
 	ErrInvalidRoleCode = errors.New("invalid role code")
+	// ErrRoleNotAllowed is returned when the role code is not permitted for self-registration.
+	ErrRoleNotAllowed = errors.New("role not allowed for self-registration")
 )
+
+// allowedSelfAssignRoles defines which roles users can assign themselves during registration.
+// Privileged roles (e.g., admin) must be assigned via admin endpoints.
+var allowedSelfAssignRoles = map[string]bool{
+	"read-only": true,
+	"demo-user": true,
+}
 
 // LoginRequest contains credentials for user login.
 type LoginRequest struct {
@@ -230,8 +239,11 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		PasswordHash: string(hash),
 	}
 
-	// Resolve role if provided
+	// Resolve role if provided (only self-assignable roles are allowed)
 	if req.RoleCode != "" {
+		if !allowedSelfAssignRoles[req.RoleCode] {
+			return nil, ErrRoleNotAllowed
+		}
 		role, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode)
 		if err != nil {
 			return nil, ErrInvalidRoleCode

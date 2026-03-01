@@ -315,10 +315,12 @@ const docTemplate = `{
             "properties": {
                 "email": {
                     "type": "string",
+                    "format": "email",
                     "maxLength": 100
                 },
                 "password": {
                     "type": "string",
+                    "maxLength": 128,
                     "minLength": 8
                 },
                 "role_code": {
@@ -326,7 +328,8 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string",
-                    "maxLength": 50
+                    "maxLength": 50,
+                    "minLength": 3
                 }
             }
         },

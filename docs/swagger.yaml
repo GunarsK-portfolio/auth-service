@@ -28,15 +28,18 @@ definitions:
   handlers.RegisterRequest:
     properties:
       email:
+        format: email
         maxLength: 100
         type: string
       password:
+        maxLength: 128
         minLength: 8
         type: string
       role_code:
         type: string
       username:
         maxLength: 50
+        minLength: 3
         type: string
     required:
     - email

@@ -64,9 +64,9 @@ type LoginResponse struct {
 
 // RegisterRequest represents the registration request payload.
 type RegisterRequest struct {
-	Username string `json:"username" binding:"required,max=50"`
-	Email    string `json:"email" binding:"required,email,max=100"`
-	Password string `json:"password" binding:"required,min=8"`
+	Username string `json:"username" binding:"required,min=3,max=50"`
+	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
+	Password string `json:"password" binding:"required,min=8,max=128"`
 	RoleCode string `json:"role_code,omitempty"`
 }
 
@@ -109,13 +109,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 				"username": req.Username,
 				"reason":   "username_taken",
 			})
-			commonHandlers.RespondError(c, http.StatusConflict, "username already taken")
+			commonHandlers.RespondError(c, http.StatusConflict, "username or email already in use")
 		case errors.Is(err, service.ErrEmailTaken):
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
 				"email":  req.Email,
 				"reason": "email_taken",
 			})
-			commonHandlers.RespondError(c, http.StatusConflict, "email already taken")
+			commonHandlers.RespondError(c, http.StatusConflict, "username or email already in use")
+		case errors.Is(err, service.ErrRoleNotAllowed):
+			commonHandlers.RespondError(c, http.StatusForbidden, "role not allowed for self-registration")
 		case errors.Is(err, service.ErrInvalidRoleCode):
 			commonHandlers.RespondError(c, http.StatusBadRequest, "invalid role code")
 		default:
