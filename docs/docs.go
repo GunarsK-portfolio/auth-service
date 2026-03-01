@@ -342,7 +342,7 @@ const docTemplate = `{
                     "minLength": 8
                 },
                 "role_code": {
-                    "description": "Any valid role except admin",
+                    "description": "Any valid role not in denied list (default: admin, rpg-admin)",
                     "type": "string",
                     "example": "read-only"
                 },

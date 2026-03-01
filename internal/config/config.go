@@ -2,6 +2,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"strings"
 
@@ -40,8 +41,10 @@ func Load() *Config {
 
 func parseDeniedRoles() []string {
 	val := os.Getenv("DENIED_SELF_ASSIGN_ROLES")
-	if val == "" {
-		return []string{"admin", "rpg-admin"}
+	if strings.TrimSpace(val) == "" {
+		defaults := []string{"admin", "rpg-admin"}
+		slog.Info("DENIED_SELF_ASSIGN_ROLES not set, using defaults", "roles", defaults)
+		return defaults
 	}
 	var roles []string
 	for _, r := range strings.Split(val, ",") {

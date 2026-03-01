@@ -36,7 +36,7 @@ definitions:
         minLength: 8
         type: string
       role_code:
-        description: Any valid role except admin
+        description: 'Any valid role not in denied list (default: admin, rpg-admin)'
         example: read-only
         type: string
       username:
