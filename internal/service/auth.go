@@ -30,12 +30,6 @@ var (
 	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
 )
 
-// deniedSelfAssignRoles defines roles that cannot be self-assigned during registration.
-var deniedSelfAssignRoles = map[string]bool{
-	"admin":     true,
-	"rpg-admin": true,
-}
-
 // LoginRequest contains credentials for user login.
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
@@ -78,17 +72,23 @@ type AuthService interface {
 }
 
 type authService struct {
-	userRepo   repository.UserRepository
-	jwtService jwt.Service
-	redis      *redis.Client
+	userRepo              repository.UserRepository
+	jwtService            jwt.Service
+	redis                 *redis.Client
+	deniedSelfAssignRoles map[string]bool
 }
 
 // NewAuthService creates a new AuthService instance.
-func NewAuthService(userRepo repository.UserRepository, jwtService jwt.Service, redisClient *redis.Client) AuthService {
+func NewAuthService(userRepo repository.UserRepository, jwtService jwt.Service, redisClient *redis.Client, deniedRoles []string) AuthService {
+	denied := make(map[string]bool, len(deniedRoles))
+	for _, r := range deniedRoles {
+		denied[r] = true
+	}
 	return &authService{
-		userRepo:   userRepo,
-		jwtService: jwtService,
-		redis:      redisClient,
+		userRepo:              userRepo,
+		jwtService:            jwtService,
+		redis:                 redisClient,
+		deniedSelfAssignRoles: denied,
 	}
 }
 
@@ -246,7 +246,7 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 
 	// Resolve role if provided (privileged roles are blocked)
 	if req.RoleCode != "" {
-		if deniedSelfAssignRoles[req.RoleCode] {
+		if s.deniedSelfAssignRoles[req.RoleCode] {
 			return nil, ErrRoleNotAllowed
 		}
 		role, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode)

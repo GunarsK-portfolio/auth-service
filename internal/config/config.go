@@ -2,6 +2,9 @@
 package config
 
 import (
+	"os"
+	"strings"
+
 	common "github.com/GunarsK-portfolio/portfolio-common/config"
 )
 
@@ -12,16 +15,18 @@ type Config struct {
 	common.RedisConfig
 	common.JWTConfig
 	common.CookieConfig
+	DeniedSelfAssignRoles []string
 }
 
 // Load reads configuration from environment variables.
 func Load() *Config {
 	cfg := &Config{
-		DatabaseConfig: common.NewDatabaseConfig(),
-		ServiceConfig:  common.NewServiceConfig(8084),
-		RedisConfig:    common.NewRedisConfig(),
-		JWTConfig:      common.NewJWTConfig(),
-		CookieConfig:   common.NewCookieConfig(),
+		DatabaseConfig:        common.NewDatabaseConfig(),
+		ServiceConfig:         common.NewServiceConfig(8084),
+		RedisConfig:           common.NewRedisConfig(),
+		JWTConfig:             common.NewJWTConfig(),
+		CookieConfig:          common.NewCookieConfig(),
+		DeniedSelfAssignRoles: parseDeniedRoles(),
 	}
 
 	// Defense-in-depth: Explicitly verify JWT secret is configured
@@ -31,4 +36,18 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+func parseDeniedRoles() []string {
+	val := os.Getenv("DENIED_SELF_ASSIGN_ROLES")
+	if val == "" {
+		return []string{"admin", "rpg-admin"}
+	}
+	var roles []string
+	for _, r := range strings.Split(val, ",") {
+		if trimmed := strings.TrimSpace(r); trimmed != "" {
+			roles = append(roles, trimmed)
+		}
+	}
+	return roles
 }

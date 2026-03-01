@@ -163,8 +163,10 @@ Base URL: `http://localhost:8084/api/v1/auth`
 curl -X POST http://localhost:8084/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
+    "username": "newuser",
     "email": "user@example.com",
-    "password": "securepassword"
+    "password": "securepassword",
+    "role_code": "read-only"
   }'
 ```
 
@@ -209,6 +211,7 @@ Key configuration groups:
 - **Redis**: Session store configuration
 - **JWT**: Token signing and expiry settings
 - **Cookie**: HttpOnly cookie configuration for secure auth
+- **Registration**: Denied role codes for self-registration
 - **Server**: Port, environment, logging
 - **CORS**: Allowed origins for cross-origin requests
 
