@@ -14,6 +14,10 @@ definitions:
     properties:
       expires_in:
         type: integer
+      scopes:
+        additionalProperties:
+          type: string
+        type: object
       success:
         type: boolean
       user_id:
@@ -21,10 +25,43 @@ definitions:
       username:
         type: string
     type: object
+  handlers.RegisterRequest:
+    properties:
+      email:
+        maxLength: 100
+        type: string
+      password:
+        minLength: 8
+        type: string
+      role_code:
+        type: string
+      username:
+        maxLength: 50
+        type: string
+    required:
+    - email
+    - password
+    - username
+    type: object
+  handlers.RegisterResponse:
+    properties:
+      email:
+        type: string
+      user_id:
+        type: integer
+      username:
+        type: string
+    type: object
   handlers.TokenStatusResponse:
     properties:
+      scopes:
+        additionalProperties:
+          type: string
+        type: object
       ttl_seconds:
         type: integer
+      username:
+        type: string
       valid:
         type: boolean
     type: object
@@ -125,6 +162,40 @@ paths:
               type: string
             type: object
       summary: Refresh access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Register a new user account
+      parameters:
+      - description: Registration data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: User registration
       tags:
       - auth
   /auth/token-status:

@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -59,6 +60,84 @@ type LoginResponse struct {
 	UserID    int64             `json:"user_id,omitempty"`
 	Username  string            `json:"username,omitempty"`
 	Scopes    map[string]string `json:"scopes,omitempty"`
+}
+
+// RegisterRequest represents the registration request payload.
+type RegisterRequest struct {
+	Username string `json:"username" binding:"required,max=50"`
+	Email    string `json:"email" binding:"required,email,max=100"`
+	Password string `json:"password" binding:"required,min=8"`
+	RoleCode string `json:"role_code,omitempty"`
+}
+
+// RegisterResponse is the response body for registration.
+type RegisterResponse struct {
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+// Register godoc
+// @Summary User registration
+// @Description Register a new user account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body RegisterRequest true "Registration data"
+// @Success 201 {object} RegisterResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /auth/register [post]
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.authService.Register(c.Request.Context(), service.RegisterRequest{
+		Username: req.Username,
+		Email:    req.Email,
+		Password: req.Password,
+		RoleCode: req.RoleCode,
+	})
+	if err != nil {
+		source := "auth-service"
+		switch {
+		case errors.Is(err, service.ErrUsernameTaken):
+			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "username_taken",
+			})
+			commonHandlers.RespondError(c, http.StatusConflict, "username already taken")
+		case errors.Is(err, service.ErrEmailTaken):
+			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
+				"email":  req.Email,
+				"reason": "email_taken",
+			})
+			commonHandlers.RespondError(c, http.StatusConflict, "email already taken")
+		case errors.Is(err, service.ErrInvalidRoleCode):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "invalid role code")
+		default:
+			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "internal_error",
+			})
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "registration failed")
+		}
+		return
+	}
+
+	source := "auth-service"
+	_ = audit.LogAction(c, h.actionLogRepo, "registration_success", nil, nil, &result.UserID, &source, map[string]interface{}{
+		"username": result.Username,
+	})
+
+	c.JSON(http.StatusCreated, RegisterResponse{
+		UserID:   result.UserID,
+		Username: result.Username,
+		Email:    result.Email,
+	})
 }
 
 // Login godoc

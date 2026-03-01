@@ -41,6 +41,7 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 	// Auth routes
 	v1 := router.Group("/api/v1/auth")
 	{
+		v1.POST("/register", authHandler.Register)
 		v1.POST("/login", authHandler.Login)
 		v1.POST("/logout", authHandler.Logout)
 		v1.POST("/refresh", authHandler.Refresh)

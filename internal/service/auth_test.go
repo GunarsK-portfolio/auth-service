@@ -34,6 +34,7 @@ type mockUserRepository struct {
 	createFunc         func(ctx context.Context, user *models.User) error
 	updateFunc         func(ctx context.Context, user *models.User) error
 	getUserScopesFunc  func(ctx context.Context, userID int64) (map[string]string, error)
+	findRoleByCodeFunc func(ctx context.Context, code string) (*models.Role, error)
 }
 
 func (m *mockUserRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
@@ -77,6 +78,13 @@ func (m *mockUserRepository) GetUserScopes(ctx context.Context, userID int64) (m
 	}
 	// Default: return nil scopes (user without role)
 	return nil, nil
+}
+
+func (m *mockUserRepository) FindRoleByCode(ctx context.Context, code string) (*models.Role, error) {
+	if m.findRoleByCodeFunc != nil {
+		return m.findRoleByCodeFunc(ctx, code)
+	}
+	return nil, errors.New("not implemented")
 }
 
 // =============================================================================
@@ -991,5 +999,205 @@ func TestConcurrentRefreshToken(t *testing.T) {
 	// At least one should succeed (due to race conditions, others might fail)
 	if successCount == 0 {
 		t.Error("At least one concurrent RefreshToken() should succeed")
+	}
+}
+
+// =============================================================================
+// Register Tests
+// =============================================================================
+
+func TestRegister_Success(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var createdUser *models.User
+	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
+		createdUser = user
+		user.ID = 3
+		return nil
+	}
+
+	result, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+	})
+
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if result.UserID != 3 {
+		t.Errorf("Register() UserID = %d, want 3", result.UserID)
+	}
+
+	if result.Username != "newuser" {
+		t.Errorf("Register() Username = %s, want newuser", result.Username)
+	}
+
+	if result.Email != "new@example.com" {
+		t.Errorf("Register() Email = %s, want new@example.com", result.Email)
+	}
+
+	// Verify password was hashed with bcrypt
+	if err := bcrypt.CompareHashAndPassword([]byte(createdUser.PasswordHash), []byte("password123")); err != nil {
+		t.Error("Register() should store a valid bcrypt hash")
+	}
+
+	// Verify no role was assigned
+	if createdUser.RoleID != nil {
+		t.Error("Register() should not assign a role when role_code is empty")
+	}
+}
+
+func TestRegister_Success_WithRoleCode(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findRoleByCodeFunc = func(ctx context.Context, code string) (*models.Role, error) {
+		return &models.Role{ID: 2, Code: "read-only", Name: "Read Only"}, nil
+	}
+
+	var createdUser *models.User
+	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
+		createdUser = user
+		user.ID = 4
+		return nil
+	}
+
+	result, err := service.Register(context.Background(), RegisterRequest{
+		Username: "viewer",
+		Email:    "viewer@example.com",
+		Password: "password123",
+		RoleCode: "read-only",
+	})
+
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if result.UserID != 4 {
+		t.Errorf("Register() UserID = %d, want 4", result.UserID)
+	}
+
+	if createdUser.RoleID == nil {
+		t.Fatal("Register() should assign role when role_code is provided")
+	}
+
+	if *createdUser.RoleID != 2 {
+		t.Errorf("Register() RoleID = %d, want 2", *createdUser.RoleID)
+	}
+}
+
+func TestRegister_UsernameTaken(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 1, Username: "existing"}, nil
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "existing",
+		Email:    "new@example.com",
+		Password: "password123",
+	})
+
+	if !errors.Is(err, ErrUsernameTaken) {
+		t.Errorf("Register() error = %v, want %v", err, ErrUsernameTaken)
+	}
+}
+
+func TestRegister_EmailTaken(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return &models.User{ID: 1, Email: "taken@example.com"}, nil
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "taken@example.com",
+		Password: "password123",
+	})
+
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Errorf("Register() error = %v, want %v", err, ErrEmailTaken)
+	}
+}
+
+func TestRegister_InvalidRoleCode(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findRoleByCodeFunc = func(ctx context.Context, code string) (*models.Role, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+		RoleCode: "nonexistent",
+	})
+
+	if !errors.Is(err, ErrInvalidRoleCode) {
+		t.Errorf("Register() error = %v, want %v", err, ErrInvalidRoleCode)
+	}
+}
+
+func TestRegister_CreateFails(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
+		return errors.New("database error")
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+	})
+
+	if err == nil {
+		t.Error("Register() should fail when Create fails")
 	}
 }
