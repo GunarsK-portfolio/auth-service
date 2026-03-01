@@ -17,6 +17,7 @@ type UserRepository interface {
 	Create(ctx context.Context, user *models.User) error
 	Update(ctx context.Context, user *models.User) error
 	GetUserScopes(ctx context.Context, userID int64) (map[string]string, error)
+	FindRoleByCode(ctx context.Context, code string) (*models.Role, error)
 }
 
 type userRepository struct {
@@ -96,4 +97,13 @@ func (r *userRepository) GetUserScopes(ctx context.Context, userID int64) (map[s
 	}
 
 	return scopes, nil
+}
+
+func (r *userRepository) FindRoleByCode(ctx context.Context, code string) (*models.Role, error) {
+	var role models.Role
+	err := r.db.WithContext(ctx).Where("code = ?", code).First(&role).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to find role by code %s: %w", code, err)
+	}
+	return &role, nil
 }

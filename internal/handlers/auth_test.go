@@ -28,6 +28,7 @@ type mockAuthService struct {
 	refreshTokenFunc            func(ctx context.Context, refreshToken string) (*service.LoginResponse, error)
 	validateTokenFunc           func(token string) (int64, error)
 	validateTokenWithClaimsFunc func(token string) (int64, *jwt.Claims, error)
+	registerFunc                func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error)
 }
 
 func (m *mockAuthService) Login(ctx context.Context, username, password string) (*service.LoginResponse, error) {
@@ -63,6 +64,13 @@ func (m *mockAuthService) ValidateTokenWithClaims(token string) (int64, *jwt.Cla
 		return m.validateTokenWithClaimsFunc(token)
 	}
 	return 0, nil, errors.New("not implemented")
+}
+
+func (m *mockAuthService) Register(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+	if m.registerFunc != nil {
+		return m.registerFunc(ctx, req)
+	}
+	return nil, errors.New("not implemented")
 }
 
 type mockJWTService struct {
@@ -1082,5 +1090,335 @@ func TestExtractToken_RequiresBearerScheme(t *testing.T) {
 				t.Errorf("extractToken() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Register Handler Tests
+// =============================================================================
+
+func TestRegister_Handler_Success(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return &service.RegisterResponse{
+				UserID:   3,
+				Username: req.Username,
+				Email:    req.Email,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status %d, got %d", http.StatusCreated, w.Code)
+	}
+
+	var response RegisterResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if response.UserID != 3 {
+		t.Errorf("expected UserID=3, got %d", response.UserID)
+	}
+	if response.Username != "newuser" {
+		t.Errorf("expected Username=newuser, got %s", response.Username)
+	}
+	if response.Email != "new@example.com" {
+		t.Errorf("expected Email=new@example.com, got %s", response.Email)
+	}
+}
+
+func TestRegister_Handler_UsernameTaken(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrUsernameTaken
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "existing",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "username or email already in use") {
+		t.Errorf("expected 'username or email already in use' in body, got %s", body)
+	}
+}
+
+func TestRegister_Handler_EmailTaken(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrEmailTaken
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "taken@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "username or email already in use") {
+		t.Errorf("expected 'username or email already in use' in body, got %s", body)
+	}
+}
+
+func TestRegister_Handler_InvalidRoleCode(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrInvalidRoleCode
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username":  "newuser",
+		"email":     "new@example.com",
+		"password":  "password123",
+		"role_code": "nonexistent",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_RoleNotAllowed(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrRoleNotAllowed
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username":  "newuser",
+		"email":     "new@example.com",
+		"password":  "password123",
+		"role_code": "admin",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "role not allowed for self-registration") {
+		t.Errorf("expected 'role not allowed for self-registration' in body, got %s", body)
+	}
+}
+
+func TestRegister_Handler_MissingUsername(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_MissingEmail(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_MissingPassword(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_InvalidEmail(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "not-an-email",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_PasswordTooShort(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": "short",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_UsernameTooLong(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "this_username_is_way_too_long_and_exceeds_the_fifty_character_limit_set_by_the_database",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_UsernameTooShort(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "ab",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_PasswordTooLong(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	longPassword := strings.Repeat("a", 73)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": longPassword,
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_PasswordTooLongBytes(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, service.ErrPasswordTooLong
+		},
+	}
+	handler := setupTestHandler(mockService)
+	// 25 3-byte UTF-8 chars = 75 bytes but only 25 chars (passes binding max=72 char check)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": strings.Repeat("\u00e9\u00e9\u00e9", 25)[:25],
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_InvalidJSON(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader([]byte("invalid json")))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestRegister_Handler_ServiceError(t *testing.T) {
+	mockService := &mockAuthService{
+		registerFunc: func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error) {
+			return nil, errors.New("internal error")
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/register", map[string]string{
+		"username": "newuser",
+		"email":    "new@example.com",
+		"password": "password123",
+	})
+
+	handler.Register(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }

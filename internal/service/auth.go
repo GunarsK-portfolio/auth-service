@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/redis/go-redis/v9"
@@ -18,7 +19,23 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	// ErrUserNotFound is returned when user is not found.
 	ErrUserNotFound = errors.New("user not found")
+	// ErrUsernameTaken is returned when the username is already in use.
+	ErrUsernameTaken = errors.New("username already taken")
+	// ErrEmailTaken is returned when the email is already in use.
+	ErrEmailTaken = errors.New("email already taken")
+	// ErrInvalidRoleCode is returned when the provided role code doesn't exist.
+	ErrInvalidRoleCode = errors.New("invalid role code")
+	// ErrRoleNotAllowed is returned when the role code is not permitted for self-registration.
+	ErrRoleNotAllowed  = errors.New("role not allowed for self-registration")
+	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
 )
+
+// allowedSelfAssignRoles defines which roles users can assign themselves during registration.
+// Privileged roles (e.g., admin) must be assigned via admin endpoints.
+var allowedSelfAssignRoles = map[string]bool{
+	"read-only": true,
+	"demo-user": true,
+}
 
 // LoginRequest contains credentials for user login.
 type LoginRequest struct {
@@ -36,6 +53,21 @@ type LoginResponse struct {
 	Scopes       map[string]string `json:"-"` // Not exposed in JSON, only for internal use
 }
 
+// RegisterRequest contains data for user registration.
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	RoleCode string `json:"role_code"`
+}
+
+// RegisterResponse contains the newly created user data.
+type RegisterResponse struct {
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
 // AuthService defines authentication operations.
 type AuthService interface {
 	Login(ctx context.Context, username, password string) (*LoginResponse, error)
@@ -43,6 +75,7 @@ type AuthService interface {
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
 	ValidateTokenWithClaims(token string) (int64, *jwt.Claims, error)
+	Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error)
 }
 
 type authService struct {
@@ -182,4 +215,56 @@ func (s *authService) ValidateTokenWithClaims(token string) (int64, *jwt.Claims,
 	}
 
 	return ttl, claims, nil
+}
+
+func (s *authService) Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
+	// bcrypt silently truncates passwords longer than 72 bytes
+	if len([]byte(req.Password)) > 72 {
+		return nil, ErrPasswordTooLong
+	}
+
+	// Check if username is taken
+	if _, err := s.userRepo.FindByUsername(ctx, req.Username); err == nil {
+		return nil, ErrUsernameTaken
+	}
+
+	// Check if email is taken
+	if _, err := s.userRepo.FindByEmail(ctx, req.Email); err == nil {
+		return nil, ErrEmailTaken
+	}
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user := &models.User{
+		Username:     req.Username,
+		Email:        req.Email,
+		PasswordHash: string(hash),
+	}
+
+	// Resolve role if provided (only self-assignable roles are allowed)
+	if req.RoleCode != "" {
+		if !allowedSelfAssignRoles[req.RoleCode] {
+			return nil, ErrRoleNotAllowed
+		}
+		role, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode)
+		if err != nil {
+			return nil, ErrInvalidRoleCode
+		}
+		roleID := int(role.ID)
+		user.RoleID = &roleID
+	}
+
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return &RegisterResponse{
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+	}, nil
 }
