@@ -2,6 +2,6 @@
   "name": "auth-service",
   "private": true,
   "devDependencies": {
-    "markdownlint-cli2": "^0.20.0"
+    "markdownlint-cli2": "^0.21.0"
   }
 }
