@@ -30,11 +30,10 @@ var (
 	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
 )
 
-// allowedSelfAssignRoles defines which roles users can assign themselves during registration.
-// Privileged roles (e.g., admin) must be assigned via admin endpoints.
-var allowedSelfAssignRoles = map[string]bool{
-	"read-only": true,
-	"demo-user": true,
+// deniedSelfAssignRoles defines roles that cannot be self-assigned during registration.
+var deniedSelfAssignRoles = map[string]bool{
+	"admin":     true,
+	"rpg-admin": true,
 }
 
 // LoginRequest contains credentials for user login.
@@ -245,9 +244,9 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		PasswordHash: string(hash),
 	}
 
-	// Resolve role if provided (only self-assignable roles are allowed)
+	// Resolve role if provided (privileged roles are blocked)
 	if req.RoleCode != "" {
-		if !allowedSelfAssignRoles[req.RoleCode] {
+		if deniedSelfAssignRoles[req.RoleCode] {
 			return nil, ErrRoleNotAllowed
 		}
 		role, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode)

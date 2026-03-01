@@ -342,12 +342,8 @@ const docTemplate = `{
                     "minLength": 8
                 },
                 "role_code": {
-                    "description": "Allowed: read-only, demo-user",
+                    "description": "Any valid role except admin",
                     "type": "string",
-                    "enum": [
-                        "read-only",
-                        "demo-user"
-                    ],
                     "example": "read-only"
                 },
                 "username": {

@@ -1172,6 +1172,22 @@ func TestRegister_RoleNotAllowed(t *testing.T) {
 	}
 }
 
+func TestRegister_RpgAdminNotAllowed(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+		RoleCode: "rpg-admin",
+	})
+
+	if !errors.Is(err, ErrRoleNotAllowed) {
+		t.Errorf("Register() error = %v, want %v", err, ErrRoleNotAllowed)
+	}
+}
+
 func TestRegister_InvalidRoleCode(t *testing.T) {
 	service, mr, mockRepo := setupTestAuthService(t)
 	defer mr.Close()

@@ -36,10 +36,7 @@ definitions:
         minLength: 8
         type: string
       role_code:
-        description: 'Allowed: read-only, demo-user'
-        enum:
-        - read-only
-        - demo-user
+        description: Any valid role except admin
         example: read-only
         type: string
       username:
