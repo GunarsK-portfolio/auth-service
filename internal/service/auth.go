@@ -44,6 +44,7 @@ type LoginResponse struct {
 	UserID       int64             `json:"-"` // Not exposed in JSON, only for internal use
 	Username     string            `json:"-"` // Not exposed in JSON, only for internal use
 	Scopes       map[string]string `json:"-"` // Not exposed in JSON, only for internal use
+	RememberMe   bool              `json:"-"` // Not exposed in JSON, only for internal use
 }
 
 // RegisterRequest contains data for user registration.
@@ -63,7 +64,7 @@ type RegisterResponse struct {
 
 // AuthService defines authentication operations.
 type AuthService interface {
-	Login(ctx context.Context, username, password string) (*LoginResponse, error)
+	Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error)
 	Logout(ctx context.Context, token string) error
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
@@ -92,7 +93,7 @@ func NewAuthService(userRepo repository.UserRepository, jwtService jwt.Service, 
 	}
 }
 
-func (s *authService) Login(ctx context.Context, username, password string) (*LoginResponse, error) {
+func (s *authService) Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error) {
 	user, err := s.userRepo.FindByUsername(ctx, username)
 	if err != nil {
 		return nil, ErrInvalidCredentials
@@ -119,9 +120,19 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		return nil, err
 	}
 
-	// Store refresh token in Redis with same expiry as JWT refresh token
-	if err := s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, s.jwtService.GetRefreshExpiry()).Err(); err != nil {
-		return nil, fmt.Errorf("failed to store refresh token: %w", err)
+	refreshExpiry := s.jwtService.GetRefreshExpiry()
+
+	// Store refresh token and remember_me atomically
+	rememberVal := "0"
+	if rememberMe {
+		rememberVal = "1"
+	}
+	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, fmt.Sprintf("refresh_token:%d", user.ID), refreshToken, refreshExpiry)
+		pipe.Set(ctx, fmt.Sprintf("remember_me:%d", user.ID), rememberVal, refreshExpiry)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to store session: %w", err)
 	}
 
 	return &LoginResponse{
@@ -131,6 +142,7 @@ func (s *authService) Login(ctx context.Context, username, password string) (*Lo
 		UserID:       user.ID,
 		Username:     user.Username,
 		Scopes:       scopes,
+		RememberMe:   rememberMe,
 	}, nil
 }
 
@@ -140,9 +152,12 @@ func (s *authService) Logout(ctx context.Context, token string) error {
 		return err
 	}
 
-	// Remove refresh token from Redis
-	if err := s.redis.Del(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID)).Err(); err != nil {
-		return fmt.Errorf("failed to invalidate refresh token: %w", err)
+	// Remove refresh token and remember_me preference from Redis
+	if err := s.redis.Del(ctx,
+		fmt.Sprintf("refresh_token:%d", claims.UserID),
+		fmt.Sprintf("remember_me:%d", claims.UserID),
+	).Err(); err != nil {
+		return fmt.Errorf("failed to invalidate session: %w", err)
 	}
 
 	return nil
@@ -160,6 +175,16 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 		return nil, errors.New("invalid refresh token")
 	}
 
+	// Read remember_me preference from Redis (default false on key miss)
+	rememberMe := false
+	if val, err := s.redis.Get(ctx, fmt.Sprintf("remember_me:%d", claims.UserID)).Result(); errors.Is(err, redis.Nil) {
+		// Key not found, keep default false
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to read remember_me preference: %w", err)
+	} else {
+		rememberMe = val == "1"
+	}
+
 	// Generate new tokens using scopes from refresh token.
 	// Note: Scopes may become stale if user's role changes between refreshes.
 	// This is an intentional trade-off to avoid a database lookup on every refresh.
@@ -174,15 +199,26 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*L
 		return nil, err
 	}
 
-	// Update refresh token in Redis with same expiry as JWT refresh token
-	if err := s.redis.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, s.jwtService.GetRefreshExpiry()).Err(); err != nil {
-		return nil, fmt.Errorf("failed to update refresh token: %w", err)
+	refreshExpiry := s.jwtService.GetRefreshExpiry()
+
+	// Update refresh token and remember_me atomically
+	rememberVal := "0"
+	if rememberMe {
+		rememberVal = "1"
+	}
+	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, fmt.Sprintf("refresh_token:%d", claims.UserID), newRefreshToken, refreshExpiry)
+		pipe.Set(ctx, fmt.Sprintf("remember_me:%d", claims.UserID), rememberVal, refreshExpiry)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to update session: %w", err)
 	}
 
 	return &LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: newRefreshToken,
 		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
+		RememberMe:   rememberMe,
 	}, nil
 }
 

@@ -23,7 +23,7 @@ import (
 // =============================================================================
 
 type mockAuthService struct {
-	loginFunc                   func(ctx context.Context, username, password string) (*service.LoginResponse, error)
+	loginFunc                   func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error)
 	logoutFunc                  func(ctx context.Context, token string) error
 	refreshTokenFunc            func(ctx context.Context, refreshToken string) (*service.LoginResponse, error)
 	validateTokenFunc           func(token string) (int64, error)
@@ -31,9 +31,9 @@ type mockAuthService struct {
 	registerFunc                func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error)
 }
 
-func (m *mockAuthService) Login(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+func (m *mockAuthService) Login(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 	if m.loginFunc != nil {
-		return m.loginFunc(ctx, username, password)
+		return m.loginFunc(ctx, username, password, rememberMe)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -193,7 +193,7 @@ func createTestContext(method, path string, body interface{}) (*httptest.Respons
 
 func TestLogin_Success(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "access_token_123",
 				RefreshToken: "refresh_token_456",
@@ -265,7 +265,7 @@ func TestLogin_Success(t *testing.T) {
 
 func TestLogin_InvalidCredentials(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return nil, errors.New("invalid credentials")
 		},
 	}
@@ -330,7 +330,7 @@ func TestLogin_InvalidJSON(t *testing.T) {
 
 func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "access_token_with_scopes",
 				RefreshToken: "refresh_token_456",
@@ -379,6 +379,271 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 	}
 	if response.Scopes["projects"] != "delete" {
 		t.Errorf("expected scopes[projects]=delete, got %s", response.Scopes["projects"])
+	}
+}
+
+// =============================================================================
+// Remember Me Tests
+// =============================================================================
+
+func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+			if !rememberMe {
+				t.Error("expected rememberMe=true")
+			}
+			return &service.LoginResponse{
+				AccessToken:  "access_token_123",
+				RefreshToken: "refresh_token_456",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "testuser",
+				RememberMe:   true,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]interface{}{
+		"username":    "testuser",
+		"password":    "password123",
+		"remember_me": true,
+	})
+
+	handler.Login(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("access_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+			}
+		}
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("refresh_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+			}
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
+	}
+}
+
+func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+			if rememberMe {
+				t.Error("expected rememberMe=false")
+			}
+			return &service.LoginResponse{
+				AccessToken:  "access_token_123",
+				RefreshToken: "refresh_token_456",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "testuser",
+				RememberMe:   false,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]interface{}{
+		"username":    "testuser",
+		"password":    "password123",
+		"remember_me": false,
+	})
+
+	handler.Login(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+			}
+		}
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+			}
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
+	}
+}
+
+func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+			if rememberMe {
+				t.Error("expected rememberMe=false when field is omitted")
+			}
+			return &service.LoginResponse{
+				AccessToken:  "access_token_123",
+				RefreshToken: "refresh_token_456",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "testuser",
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	// Omit remember_me field entirely
+	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]string{
+		"username": "testuser",
+		"password": "password123",
+	})
+
+	handler.Login(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+			}
+		}
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+			}
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
+	}
+}
+
+func TestRefresh_PreservesRememberMe(t *testing.T) {
+	mockService := &mockAuthService{
+		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+			return &service.LoginResponse{
+				AccessToken:  "new_access_token",
+				RefreshToken: "new_refresh_token",
+				ExpiresIn:    900,
+				RememberMe:   true,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
+
+	handler.Refresh(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("access_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+			}
+		}
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("refresh_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+			}
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
+	}
+}
+
+func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
+	mockService := &mockAuthService{
+		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+			return &service.LoginResponse{
+				AccessToken:  "new_access_token",
+				RefreshToken: "new_refresh_token",
+				ExpiresIn:    900,
+				RememberMe:   false,
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
+
+	handler.Refresh(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
+	for _, cookie := range cookies {
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+			}
+		}
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+			}
+		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
@@ -952,7 +1217,7 @@ func TestTokenStatus_CookiePriorityOverHeader(t *testing.T) {
 
 func TestLogin_TokensNotInResponseBody(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "secret_access_token",
 				RefreshToken: "secret_refresh_token",

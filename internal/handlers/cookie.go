@@ -25,9 +25,17 @@ func NewCookieHelper(config common.CookieConfig) *CookieHelper {
 
 // SetAuthCookies sets both access and refresh token cookies.
 // Access token uses config.Path (typically "/"), refresh token uses config.RefreshPath.
-func (h *CookieHelper) SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessExpiry, refreshExpiry time.Duration) {
-	h.setCookie(c, AccessTokenCookie, accessToken, int(accessExpiry.Seconds()), h.config.Path)
-	h.setCookie(c, RefreshTokenCookie, refreshToken, int(refreshExpiry.Seconds()), h.config.RefreshPath)
+// When persistent is false, maxAge is 0 (session cookie - browser omits Max-Age header).
+// When persistent is true, maxAge is set to the token expiry duration.
+func (h *CookieHelper) SetAuthCookies(c *gin.Context, accessToken, refreshToken string, accessExpiry, refreshExpiry time.Duration, persistent bool) {
+	accessMaxAge := 0
+	refreshMaxAge := 0
+	if persistent {
+		accessMaxAge = int(accessExpiry.Seconds())
+		refreshMaxAge = int(refreshExpiry.Seconds())
+	}
+	h.setCookie(c, AccessTokenCookie, accessToken, accessMaxAge, h.config.Path)
+	h.setCookie(c, RefreshTokenCookie, refreshToken, refreshMaxAge, h.config.RefreshPath)
 }
 
 // ClearAuthCookies removes both authentication cookies.

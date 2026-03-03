@@ -295,6 +295,9 @@ const docTemplate = `{
                 "password": {
                     "type": "string"
                 },
+                "remember_me": {
+                    "type": "boolean"
+                },
                 "username": {
                     "type": "string"
                 }

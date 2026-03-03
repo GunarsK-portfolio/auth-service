@@ -177,7 +177,7 @@ func TestLogin_Success(t *testing.T) {
 		}, nil
 	}
 
-	result, err := service.Login(context.Background(), "testuser", "testpassword")
+	result, err := service.Login(context.Background(), "testuser", "testpassword", false)
 
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
@@ -210,7 +210,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 		return nil, gorm.ErrRecordNotFound
 	}
 
-	_, err := service.Login(context.Background(), "nonexistent", "password")
+	_, err := service.Login(context.Background(), "nonexistent", "password", false)
 
 	if err == nil {
 		t.Error("Login() should fail for non-existent user")
@@ -235,7 +235,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 		}, nil
 	}
 
-	_, err := service.Login(context.Background(), "testuser", "wrongpassword")
+	_, err := service.Login(context.Background(), "testuser", "wrongpassword", false)
 
 	if err == nil {
 		t.Error("Login() should fail for wrong password")
@@ -273,7 +273,7 @@ func TestLogin_EmptyCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := service.Login(context.Background(), tt.username, tt.password)
+			_, err := service.Login(context.Background(), tt.username, tt.password, false)
 			if err == nil {
 				t.Error("Login() should fail for empty credentials")
 			}
@@ -297,7 +297,7 @@ func TestLogin_RedisFailure(t *testing.T) {
 	// Close Redis to simulate failure
 	mr.Close()
 
-	_, err := service.Login(context.Background(), "testuser", "testpassword")
+	_, err := service.Login(context.Background(), "testuser", "testpassword", false)
 
 	if err == nil {
 		t.Error("Login() should fail when Redis is unavailable")
@@ -322,10 +322,234 @@ func TestLogin_ContextCancellation(t *testing.T) {
 		}, nil
 	}
 
-	_, err := service.Login(ctx, "testuser", "password")
+	_, err := service.Login(ctx, "testuser", "password", false)
 
 	if err == nil {
 		t.Error("Login() should fail when context is cancelled")
+	}
+}
+
+// =============================================================================
+// Remember Me Tests
+// =============================================================================
+
+func TestLogin_RememberMe_StoresInRedis(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	result, err := service.Login(context.Background(), "testuser", "testpassword", true)
+
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	if !result.RememberMe {
+		t.Error("Login() RememberMe should be true")
+	}
+
+	// Verify remember_me was stored in Redis
+	val, err := mr.Get("remember_me:1")
+	if err != nil {
+		t.Fatal("remember_me:1 should exist in Redis")
+	}
+	if val != "1" {
+		t.Errorf("remember_me:1 = %s, want 1", val)
+	}
+}
+
+func TestLogin_NoRememberMe_StoresFalseInRedis(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	result, err := service.Login(context.Background(), "testuser", "testpassword", false)
+
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	if result.RememberMe {
+		t.Error("Login() RememberMe should be false")
+	}
+
+	val, err := mr.Get("remember_me:1")
+	if err != nil {
+		t.Fatal("remember_me:1 should exist in Redis")
+	}
+	if val != "0" {
+		t.Errorf("remember_me:1 = %s, want 0", val)
+	}
+}
+
+func TestRefreshToken_PreservesRememberMe(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	// Login with remember_me=true
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", true)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Refresh should preserve remember_me=true
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	if !refreshResult.RememberMe {
+		t.Error("RefreshToken() should preserve RememberMe=true")
+	}
+
+	// Verify remember_me key still exists with value "1"
+	val, err := mr.Get("remember_me:1")
+	if err != nil {
+		t.Fatal("remember_me:1 should still exist after refresh")
+	}
+	if val != "1" {
+		t.Errorf("remember_me:1 = %s, want 1 after refresh", val)
+	}
+}
+
+func TestRefreshToken_RememberMeFalsePreserved(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	// Login with remember_me=false
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Refresh should preserve remember_me=false
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	if refreshResult.RememberMe {
+		t.Error("RefreshToken() should preserve RememberMe=false")
+	}
+}
+
+func TestRefreshToken_RememberMeDefaultsFalseOnMiss(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	// Login to get a valid refresh token
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", true)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Manually delete the remember_me key to simulate a miss
+	mr.Del("remember_me:1")
+
+	time.Sleep(jwtTimestampBuffer)
+
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	if refreshResult.RememberMe {
+		t.Error("RefreshToken() should default RememberMe=false on Redis miss")
+	}
+}
+
+func TestLogout_CleansUpRememberMe(t *testing.T) {
+	service, mr, mockRepo := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	// Login with remember_me=true
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", true)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	// Verify both keys exist
+	if !mr.Exists("refresh_token:1") {
+		t.Fatal("refresh_token:1 should exist before logout")
+	}
+	if !mr.Exists("remember_me:1") {
+		t.Fatal("remember_me:1 should exist before logout")
+	}
+
+	// Logout
+	err = service.Logout(context.Background(), loginResult.AccessToken)
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+
+	// Verify both keys are deleted
+	if mr.Exists("refresh_token:1") {
+		t.Error("Logout() should remove refresh_token from Redis")
+	}
+	if mr.Exists("remember_me:1") {
+		t.Error("Logout() should remove remember_me from Redis")
 	}
 }
 
@@ -355,7 +579,7 @@ func TestLogin_WithScopes(t *testing.T) {
 		return testScopes, nil
 	}
 
-	result, err := service.Login(context.Background(), "testuser", "testpassword")
+	result, err := service.Login(context.Background(), "testuser", "testpassword", false)
 
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
@@ -396,7 +620,7 @@ func TestLogin_WithNilScopes(t *testing.T) {
 
 	// getUserScopesFunc returns nil by default (user without role)
 
-	result, err := service.Login(context.Background(), "testuser", "testpassword")
+	result, err := service.Login(context.Background(), "testuser", "testpassword", false)
 
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
@@ -431,7 +655,7 @@ func TestLogin_GetUserScopesError(t *testing.T) {
 		return nil, errors.New("database error")
 	}
 
-	_, err := service.Login(context.Background(), "testuser", "testpassword")
+	_, err := service.Login(context.Background(), "testuser", "testpassword", false)
 
 	if err == nil {
 		t.Error("Login() should fail when GetUserScopes fails")
@@ -461,7 +685,7 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 	}
 
 	// Login to get tokens with scopes
-	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -520,7 +744,7 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 	}
 
 	// Login with initial scopes
-	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -576,7 +800,7 @@ func TestLogout_Success(t *testing.T) {
 	}
 
 	// Login first to get a valid token
-	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -675,7 +899,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	}
 
 	// Login to get refresh token
-	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -943,7 +1167,7 @@ func TestConcurrentLogins(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
-			_, err := service.Login(context.Background(), "testuser", "testpassword")
+			_, err := service.Login(context.Background(), "testuser", "testpassword", false)
 			errors <- err
 		}()
 	}
@@ -970,7 +1194,7 @@ func TestConcurrentRefreshToken(t *testing.T) {
 	}
 
 	// Login to get refresh token
-	loginResult, err := service.Login(context.Background(), "testuser", "testpassword")
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}

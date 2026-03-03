@@ -6,7 +6,7 @@ The auth-service uses Go's standard `testing` package for unit tests.
 This is a JWT authentication service that handles user login, token refresh,
 logout, and session management via Redis.
 
-Current coverage: 74% on service, 100% on handlers, 97% on middleware
+Current coverage: 82% on service, 100% on handlers, 100% on middleware
 
 ## Quick Commands
 
@@ -36,37 +36,44 @@ go test -v -run TestLogin ./internal/service/
 
 ## Test Files
 
-**`internal/service/auth_test.go`** - 28 tests
+**`internal/service/auth_test.go`** - 45 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
 | Constructor | 2 | Service initialization, interface compliance |
 | Login | 6 | Success, user not found, wrong password, empty credentials, Redis failure, context cancellation |
-| Scopes | 4 | Login with scopes, login with nil scopes, GetUserScopes error, refresh preserves scopes |
+| Login Remember Me | 2 | remember_me stored in Redis, default false stored |
+| Scopes | 5 | Login with scopes, login with nil scopes, GetUserScopes error, refresh preserves scopes, scopes not refetched |
 | Logout | 4 | Success, invalid/expired token, Redis failure |
+| Logout Remember Me | 1 | Cleans up remember_me key |
 | Refresh Token | 6 | Success, invalid/expired token, not in Redis, mismatch, Redis failure |
+| Refresh Remember Me | 3 | Preserves true, preserves false, defaults false on Redis miss |
 | Validate Token | 4 | Valid token, invalid token, expired token, almost-expired |
 | Concurrency | 2 | Concurrent logins, concurrent refresh |
+| Register | 10 | Success, success with role, username/email taken, role not allowed, rpg-admin blocked, invalid role, password length, create failure |
 
-**`internal/handlers/auth_test.go`** - 28 tests
+**`internal/handlers/auth_test.go`** - 49 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
 | Login | 6 | Success with cookies, scopes in response, invalid credentials, missing username/password, invalid JSON |
+| Login Remember Me | 3 | Persistent cookies when true, session cookies when false, default false |
 | Logout | 4 | Success (cookie), success (header), no token, service error |
 | Refresh | 3 | Success with new cookies, no token, invalid token |
+| Refresh Remember Me | 2 | Preserves remember_me preference, session cookies when not remembered |
 | Validate | 3 | Success with claims, invalid token, missing token |
 | TokenStatus | 5 | Success with scopes (cookie), success (header), no token, invalid token, expired token |
-| extractToken | 2 | Valid bearer, no header, invalid format, multiple spaces, Bearer scheme required (subtests) |
+| extractToken | 2 | Valid bearer, Bearer scheme required (subtests) |
 | Constructor | 1 | NewAuthHandler initialization |
 | Cookie Priority | 2 | Cookie preferred over header for logout/token-status |
 | Security | 2 | Tokens not exposed in response body (login, refresh) |
+| Register | 16 | Success, username/email taken, invalid/not allowed role, missing fields, invalid email, password length validation, invalid JSON, service error |
 
-**`internal/handlers/cookie_test.go`** - 5 tests
+**`internal/handlers/cookie_test.go`** - 6 tests
 
 | Category | Tests | Coverage |
 | -------- | ----- | -------- |
-| SetAuthCookies | 2 | Dev/prod config, HttpOnly, Secure, SameSite, Path, Domain |
+| SetAuthCookies | 2 | Persistent cookies (dev/prod config), session cookies (MaxAge=0) |
 | ClearAuthCookies | 1 | Cookie expiration (MaxAge=-1) |
 | GetAccessToken | 1 | Extract access_token from cookie |
 | GetRefreshToken | 1 | Extract refresh_token from cookie |
@@ -184,9 +191,11 @@ The auth-service is an HTTP API (not a worker):
 
 ### Authentication Flow
 
-1. **Login**: Validate credentials → Fetch scopes → Generate tokens → Set cookies
-2. **Refresh**: Validate cookie → Check Redis → Use scopes from token → Set cookies
-3. **Logout**: Parse token → Delete from Redis → Clear cookies
+1. **Login**: Validate credentials → Fetch scopes → Generate tokens
+   → Store remember_me → Set cookies
+2. **Refresh**: Validate cookie → Check Redis → Read remember_me
+   → Use scopes from token → Set cookies
+3. **Logout**: Parse token → Delete from Redis → Delete remember_me → Clear cookies
 4. **Validate**: Parse token → Verify signature → Return TTL and claims
 
 ### Token Management
@@ -194,6 +203,7 @@ The auth-service is an HTTP API (not a worker):
 - Access tokens: Short-lived (15m default), httpOnly cookie, includes scopes
 - Refresh tokens: Long-lived (7d default), stored in Redis, includes scopes
 - Token rotation: Refresh generates new pair, invalidates old, preserves scopes
+- Remember me: Stored in Redis, controls cookie persistence (session vs persistent)
 - Scopes: Fetched from DB on login only (no DB hit on refresh)
 
 ## Contributing Tests
