@@ -574,13 +574,26 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.MaxAge <= 0 {
-			t.Errorf("access_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("access_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+			}
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.MaxAge <= 0 {
-			t.Errorf("refresh_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("refresh_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+			}
 		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
