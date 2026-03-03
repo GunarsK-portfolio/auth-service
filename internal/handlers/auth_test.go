@@ -417,13 +417,26 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.MaxAge <= 0 {
-			t.Errorf("access_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("access_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+			}
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.MaxAge <= 0 {
-			t.Errorf("refresh_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("refresh_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+			}
 		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
@@ -458,13 +471,26 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("access_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+			}
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+			}
 		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
@@ -498,13 +524,26 @@ func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("access_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+			}
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie (default)", cookie.MaxAge)
+			}
 		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
@@ -572,13 +611,26 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
+	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("access_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+		if cookie.Name == AccessTokenCookie {
+			foundAccess = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("access_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+			}
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.MaxAge != 0 {
-			t.Errorf("refresh_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+		if cookie.Name == RefreshTokenCookie {
+			foundRefresh = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("refresh_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+			}
 		}
+	}
+	if !foundAccess {
+		t.Error("access_token cookie not set")
+	}
+	if !foundRefresh {
+		t.Error("refresh_token cookie not set")
 	}
 }
 
