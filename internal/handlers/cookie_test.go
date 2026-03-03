@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestSetAuthCookies(t *testing.T) {
+func TestSetAuthCookies_Persistent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -54,7 +54,7 @@ func TestSetAuthCookies(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 
 			helper := NewCookieHelper(tt.cookieConfig)
-			helper.SetAuthCookies(c, "access123", "refresh456", 15*time.Minute, 7*24*time.Hour)
+			helper.SetAuthCookies(c, "access123", "refresh456", 15*time.Minute, 7*24*time.Hour, true)
 
 			cookies := w.Result().Cookies()
 			if len(cookies) != 2 {
@@ -79,6 +79,9 @@ func TestSetAuthCookies(t *testing.T) {
 			if accessCookie.Value != "access123" {
 				t.Errorf("access_token value = %s, want access123", accessCookie.Value)
 			}
+			if accessCookie.MaxAge != int((15 * time.Minute).Seconds()) {
+				t.Errorf("access_token MaxAge = %d, want %d", accessCookie.MaxAge, int((15 * time.Minute).Seconds()))
+			}
 			if !accessCookie.HttpOnly {
 				t.Error("access_token should be HttpOnly")
 			}
@@ -102,6 +105,9 @@ func TestSetAuthCookies(t *testing.T) {
 			if refreshCookie.Value != "refresh456" {
 				t.Errorf("refresh_token value = %s, want refresh456", refreshCookie.Value)
 			}
+			if refreshCookie.MaxAge != int((7 * 24 * time.Hour).Seconds()) {
+				t.Errorf("refresh_token MaxAge = %d, want %d", refreshCookie.MaxAge, int((7 * 24 * time.Hour).Seconds()))
+			}
 			if !refreshCookie.HttpOnly {
 				t.Error("refresh_token should be HttpOnly")
 			}
@@ -119,6 +125,31 @@ func TestSetAuthCookies(t *testing.T) {
 				t.Errorf("refresh_token Domain = %s, want %s", refreshCookie.Domain, tt.wantDomain)
 			}
 		})
+	}
+}
+
+func TestSetAuthCookies_Session(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	helper := NewCookieHelper(common.CookieConfig{
+		Path:        "/",
+		RefreshPath: "/api/v1/auth/refresh",
+	})
+	helper.SetAuthCookies(c, "access123", "refresh456", 15*time.Minute, 7*24*time.Hour, false)
+
+	cookies := w.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Errorf("expected 2 cookies, got %d", len(cookies))
+		return
+	}
+
+	for _, cookie := range cookies {
+		if cookie.MaxAge != 0 {
+			t.Errorf("cookie %s MaxAge = %d, want 0 (session cookie)", cookie.Name, cookie.MaxAge)
+		}
 	}
 }
 

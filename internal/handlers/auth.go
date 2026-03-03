@@ -39,8 +39,9 @@ func NewAuthHandler(
 
 // LoginRequest represents the login request payload.
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username   string `json:"username" binding:"required"`
+	Password   string `json:"password" binding:"required"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 // RefreshRequest represents the token refresh request payload.
@@ -174,7 +175,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password)
+	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password, req.RememberMe)
 	if err != nil {
 		// Log failed login attempt
 		source := "auth-service"
@@ -193,6 +194,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		response.RefreshToken,
 		h.jwtService.GetAccessExpiry(),
 		h.jwtService.GetRefreshExpiry(),
+		response.RememberMe,
 	)
 
 	// Log successful login with explicit user_id
@@ -273,6 +275,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		response.RefreshToken,
 		h.jwtService.GetAccessExpiry(),
 		h.jwtService.GetRefreshExpiry(),
+		response.RememberMe,
 	)
 
 	// Log token refresh
