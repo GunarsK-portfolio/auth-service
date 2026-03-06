@@ -196,6 +196,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		h.jwtService.GetRefreshExpiry(),
 		response.RememberMe,
 	)
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, response.RememberMe, h.jwtService.GetRefreshExpiry())
 
 	// Log successful login with explicit user_id
 	source := "auth-service"
@@ -231,7 +232,13 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.Logout(c.Request.Context(), token); err != nil {
+	sessionID := h.cookieHelper.GetSessionID(c)
+	if sessionID == "" {
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		return
+	}
+
+	if err := h.authService.Logout(c.Request.Context(), token, sessionID); err != nil {
 		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
 		return
 	}
@@ -255,14 +262,20 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Failure 401 {object} map[string]string
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	// Get refresh token from cookie
+	// Get refresh token and session ID from cookies
 	refreshToken := h.cookieHelper.GetRefreshToken(c)
 	if refreshToken == "" {
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "refresh token required")
 		return
 	}
 
-	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken)
+	sessionID := h.cookieHelper.GetSessionID(c)
+	if sessionID == "" {
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		return
+	}
+
+	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, sessionID)
 	if err != nil {
 		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
 		return

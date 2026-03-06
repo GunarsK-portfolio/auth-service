@@ -24,8 +24,8 @@ import (
 
 type mockAuthService struct {
 	loginFunc                   func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error)
-	logoutFunc                  func(ctx context.Context, token string) error
-	refreshTokenFunc            func(ctx context.Context, refreshToken string) (*service.LoginResponse, error)
+	logoutFunc                  func(ctx context.Context, token, sessionID string) error
+	refreshTokenFunc            func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error)
 	validateTokenFunc           func(token string) (int64, error)
 	validateTokenWithClaimsFunc func(token string) (int64, *jwt.Claims, error)
 	registerFunc                func(ctx context.Context, req service.RegisterRequest) (*service.RegisterResponse, error)
@@ -38,16 +38,16 @@ func (m *mockAuthService) Login(ctx context.Context, username, password string, 
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockAuthService) Logout(ctx context.Context, token string) error {
+func (m *mockAuthService) Logout(ctx context.Context, token, sessionID string) error {
 	if m.logoutFunc != nil {
-		return m.logoutFunc(ctx, token)
+		return m.logoutFunc(ctx, token, sessionID)
 	}
 	return errors.New("not implemented")
 }
 
-func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 	if m.refreshTokenFunc != nil {
-		return m.refreshTokenFunc(ctx, refreshToken)
+		return m.refreshTokenFunc(ctx, refreshToken, sessionID)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -236,11 +236,11 @@ func TestLogin_Success(t *testing.T) {
 
 	// Verify cookies are set
 	cookies := w.Result().Cookies()
-	if len(cookies) != 2 {
-		t.Errorf("expected 2 cookies, got %d", len(cookies))
+	if len(cookies) != 3 {
+		t.Errorf("expected 3 cookies, got %d", len(cookies))
 	}
 
-	var hasAccess, hasRefresh bool
+	var hasAccess, hasRefresh, hasSession bool
 	for _, cookie := range cookies {
 		if cookie.Name == AccessTokenCookie {
 			hasAccess = true
@@ -254,12 +254,18 @@ func TestLogin_Success(t *testing.T) {
 				t.Errorf("refresh_token value = %s, want refresh_token_456", cookie.Value)
 			}
 		}
+		if cookie.Name == SessionIDCookie {
+			hasSession = true
+		}
 	}
 	if !hasAccess {
 		t.Error("access_token cookie not set")
 	}
 	if !hasRefresh {
 		t.Error("refresh_token cookie not set")
+	}
+	if !hasSession {
+		t.Error("session_id cookie not set")
 	}
 }
 
@@ -549,7 +555,7 @@ func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 
 func TestRefresh_PreservesRememberMe(t *testing.T) {
 	mockService := &mockAuthService{
-		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "new_access_token",
 				RefreshToken: "new_refresh_token",
@@ -566,6 +572,7 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
 	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Refresh(c)
 
@@ -599,7 +606,7 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 
 func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 	mockService := &mockAuthService{
-		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "new_access_token",
 				RefreshToken: "new_refresh_token",
@@ -616,6 +623,7 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
 	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Refresh(c)
 
@@ -653,7 +661,7 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 
 func TestLogout_Success_Cookie(t *testing.T) {
 	mockService := &mockAuthService{
-		logoutFunc: func(ctx context.Context, token string) error {
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
 			return nil
 		},
 	}
@@ -665,6 +673,7 @@ func TestLogout_Success_Cookie(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
 	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Logout(c)
 
@@ -685,7 +694,7 @@ func TestLogout_Success_Cookie(t *testing.T) {
 
 func TestLogout_Success_Header(t *testing.T) {
 	mockService := &mockAuthService{
-		logoutFunc: func(ctx context.Context, token string) error {
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
 			if token != "header_token" {
 				t.Errorf("expected token=header_token, got %s", token)
 			}
@@ -700,6 +709,7 @@ func TestLogout_Success_Header(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
 	c.Request.Header.Set("Authorization", "Bearer header_token")
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Logout(c)
 
@@ -726,7 +736,7 @@ func TestLogout_NoToken(t *testing.T) {
 
 func TestLogout_ServiceError(t *testing.T) {
 	mockService := &mockAuthService{
-		logoutFunc: func(ctx context.Context, token string) error {
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
 			return errors.New("logout failed")
 		},
 	}
@@ -738,6 +748,7 @@ func TestLogout_ServiceError(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
 	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Logout(c)
 
@@ -752,7 +763,7 @@ func TestLogout_ServiceError(t *testing.T) {
 
 func TestRefresh_Success(t *testing.T) {
 	mockService := &mockAuthService{
-		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "new_access_token",
 				RefreshToken: "new_refresh_token",
@@ -768,6 +779,7 @@ func TestRefresh_Success(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
 	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Refresh(c)
 
@@ -821,7 +833,7 @@ func TestRefresh_NoToken(t *testing.T) {
 
 func TestRefresh_InvalidToken(t *testing.T) {
 	mockService := &mockAuthService{
-		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return nil, errors.New("invalid refresh token")
 		},
 	}
@@ -833,6 +845,7 @@ func TestRefresh_InvalidToken(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
 	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "invalid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Refresh(c)
 
@@ -1160,7 +1173,7 @@ func TestNewAuthHandler(t *testing.T) {
 func TestLogout_CookiePriorityOverHeader(t *testing.T) {
 	var receivedToken string
 	mockService := &mockAuthService{
-		logoutFunc: func(ctx context.Context, token string) error {
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
 			receivedToken = token
 			return nil
 		},
@@ -1173,6 +1186,7 @@ func TestLogout_CookiePriorityOverHeader(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
 	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "cookie_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 	c.Request.Header.Set("Authorization", "Bearer header_token")
 
 	handler.Logout(c)
@@ -1269,7 +1283,7 @@ func TestLogin_TokensNotInResponseBody(t *testing.T) {
 
 func TestRefresh_TokensNotInResponseBody(t *testing.T) {
 	mockService := &mockAuthService{
-		refreshTokenFunc: func(ctx context.Context, refreshToken string) (*service.LoginResponse, error) {
+		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "new_secret_access",
 				RefreshToken: "new_secret_refresh",
@@ -1285,6 +1299,7 @@ func TestRefresh_TokensNotInResponseBody(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
 	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "old_refresh"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
 
 	handler.Refresh(c)
 

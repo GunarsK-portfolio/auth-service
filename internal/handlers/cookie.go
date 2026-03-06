@@ -11,6 +11,7 @@ const (
 	// Cookie names
 	AccessTokenCookie  = "access_token"
 	RefreshTokenCookie = "refresh_token"
+	SessionIDCookie    = "session_id"
 )
 
 // CookieHelper manages authentication cookies.
@@ -38,10 +39,29 @@ func (h *CookieHelper) SetAuthCookies(c *gin.Context, accessToken, refreshToken 
 	h.setCookie(c, RefreshTokenCookie, refreshToken, refreshMaxAge, h.config.RefreshPath)
 }
 
-// ClearAuthCookies removes both authentication cookies.
+// SetSessionCookie sets the session_id cookie (same path as access token).
+func (h *CookieHelper) SetSessionCookie(c *gin.Context, sessionID string, persistent bool, expiry time.Duration) {
+	maxAge := 0
+	if persistent {
+		maxAge = int(expiry.Seconds())
+	}
+	h.setCookie(c, SessionIDCookie, sessionID, maxAge, h.config.Path)
+}
+
+// GetSessionID retrieves the session ID from cookie.
+func (h *CookieHelper) GetSessionID(c *gin.Context) string {
+	id, err := c.Cookie(SessionIDCookie)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// ClearAuthCookies removes all authentication cookies.
 func (h *CookieHelper) ClearAuthCookies(c *gin.Context) {
 	h.setCookie(c, AccessTokenCookie, "", -1, h.config.Path)
 	h.setCookie(c, RefreshTokenCookie, "", -1, h.config.RefreshPath)
+	h.setCookie(c, SessionIDCookie, "", -1, h.config.Path)
 }
 
 // GetAccessToken retrieves the access token from cookie.

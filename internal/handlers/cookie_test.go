@@ -166,19 +166,22 @@ func TestClearAuthCookies(t *testing.T) {
 	helper.ClearAuthCookies(c)
 
 	cookies := w.Result().Cookies()
-	// Expect 2 cookies: access_token at Path, refresh_token at RefreshPath
-	if len(cookies) != 2 {
-		t.Errorf("expected 2 cookies, got %d", len(cookies))
+	// Expect 3 cookies: access_token, refresh_token, session_id
+	if len(cookies) != 3 {
+		t.Errorf("expected 3 cookies, got %d", len(cookies))
 		return
 	}
 
-	var accessCookie, refreshCookie *http.Cookie
+	var accessCookie, refreshCookie, sessionCookie *http.Cookie
 	for _, cookie := range cookies {
 		if cookie.Name == "access_token" {
 			accessCookie = cookie
 		}
 		if cookie.Name == "refresh_token" {
 			refreshCookie = cookie
+		}
+		if cookie.Name == "session_id" {
+			sessionCookie = cookie
 		}
 	}
 
@@ -202,6 +205,17 @@ func TestClearAuthCookies(t *testing.T) {
 	}
 	if refreshCookie.Path != "/auth/v1/refresh" {
 		t.Errorf("refresh_token Path = %s, want /auth/v1/refresh", refreshCookie.Path)
+	}
+
+	if sessionCookie == nil {
+		t.Error("session_id cookie not found")
+		return
+	}
+	if sessionCookie.MaxAge != -1 {
+		t.Errorf("session_id MaxAge = %d, want -1", sessionCookie.MaxAge)
+	}
+	if sessionCookie.Path != "/" {
+		t.Errorf("session_id Path = %s, want /", sessionCookie.Path)
 	}
 }
 
