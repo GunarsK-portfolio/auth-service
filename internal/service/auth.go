@@ -168,6 +168,10 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 }
 
 func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID string) (*LoginResponse, error) {
+	if _, err := uuid.Parse(sessionID); err != nil {
+		return nil, errors.New("invalid refresh token")
+	}
+
 	claims, err := s.jwtService.ValidateToken(refreshToken)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
@@ -223,6 +227,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		RefreshToken: newRefreshToken,
 		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
 		RememberMe:   rememberMe,
+		SessionID:    sessionID,
 	}, nil
 }
 

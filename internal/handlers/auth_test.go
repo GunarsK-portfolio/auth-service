@@ -561,6 +561,7 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 				RefreshToken: "new_refresh_token",
 				ExpiresIn:    900,
 				RememberMe:   true,
+				SessionID:    "test-session-id",
 			}, nil
 		},
 	}
@@ -581,7 +582,7 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
-	var foundAccess, foundRefresh bool
+	var foundAccess, foundRefresh, foundSession bool
 	for _, cookie := range cookies {
 		if cookie.Name == AccessTokenCookie {
 			foundAccess = true
@@ -595,12 +596,21 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 				t.Errorf("refresh_token MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
 			}
 		}
+		if cookie.Name == SessionIDCookie {
+			foundSession = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("session_id MaxAge = %d, want > 0 (remember_me preserved)", cookie.MaxAge)
+			}
+		}
 	}
 	if !foundAccess {
 		t.Error("access_token cookie not set")
 	}
 	if !foundRefresh {
 		t.Error("refresh_token cookie not set")
+	}
+	if !foundSession {
+		t.Error("session_id cookie not set on refresh")
 	}
 }
 
@@ -612,6 +622,7 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 				RefreshToken: "new_refresh_token",
 				ExpiresIn:    900,
 				RememberMe:   false,
+				SessionID:    "test-session-id",
 			}, nil
 		},
 	}
@@ -632,7 +643,7 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
-	var foundAccess, foundRefresh bool
+	var foundAccess, foundRefresh, foundSession bool
 	for _, cookie := range cookies {
 		if cookie.Name == AccessTokenCookie {
 			foundAccess = true
@@ -646,12 +657,21 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 				t.Errorf("refresh_token MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
 			}
 		}
+		if cookie.Name == SessionIDCookie {
+			foundSession = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("session_id MaxAge = %d, want 0 (session cookie)", cookie.MaxAge)
+			}
+		}
 	}
 	if !foundAccess {
 		t.Error("access_token cookie not set")
 	}
 	if !foundRefresh {
 		t.Error("refresh_token cookie not set")
+	}
+	if !foundSession {
+		t.Error("session_id cookie not set on refresh")
 	}
 }
 
@@ -768,6 +788,7 @@ func TestRefresh_Success(t *testing.T) {
 				AccessToken:  "new_access_token",
 				RefreshToken: "new_refresh_token",
 				ExpiresIn:    900,
+				SessionID:    sessionID,
 			}, nil
 		},
 	}
@@ -1288,6 +1309,7 @@ func TestRefresh_TokensNotInResponseBody(t *testing.T) {
 				AccessToken:  "new_secret_access",
 				RefreshToken: "new_secret_refresh",
 				ExpiresIn:    900,
+				SessionID:    sessionID,
 			}, nil
 		},
 	}

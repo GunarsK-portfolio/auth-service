@@ -436,6 +436,10 @@ func TestRefreshToken_PreservesRememberMe(t *testing.T) {
 		t.Error("RefreshToken() should preserve RememberMe=true")
 	}
 
+	if refreshResult.SessionID != loginResult.SessionID {
+		t.Errorf("RefreshToken() SessionID = %q, want %q", refreshResult.SessionID, loginResult.SessionID)
+	}
+
 	// Verify remember_me key still exists with value "1"
 	val, err := mr.Get("remember_me:1:" + loginResult.SessionID)
 	if err != nil {
@@ -950,6 +954,19 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 
 	if err == nil {
 		t.Error("RefreshToken() should fail for invalid token")
+	}
+}
+
+func TestRefreshToken_MalformedSessionID(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	_, err := service.RefreshToken(context.Background(), "any-token", "not-a-uuid")
+	if err == nil {
+		t.Error("RefreshToken() should reject malformed sessionID")
+	}
+	if err.Error() != "invalid refresh token" {
+		t.Errorf("RefreshToken() error = %q, want %q", err.Error(), "invalid refresh token")
 	}
 }
 

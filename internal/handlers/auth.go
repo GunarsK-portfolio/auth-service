@@ -290,6 +290,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		h.jwtService.GetRefreshExpiry(),
 		response.RememberMe,
 	)
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, response.RememberMe, h.jwtService.GetRefreshExpiry())
 
 	// Log token refresh
 	source := "auth-service"
