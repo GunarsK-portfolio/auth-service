@@ -950,7 +950,7 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	_, err := service.RefreshToken(context.Background(), "invalid-token", "any-session")
+	_, err := service.RefreshToken(context.Background(), "invalid-token", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 	if err == nil {
 		t.Error("RefreshToken() should fail for invalid token")
@@ -987,7 +987,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	}
 
 	// Store in Redis
-	testSessionID := "test-session-id"
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	_ = mr.Set("refresh_token:1:"+testSessionID, token)
 
 	// Wait for expiry
@@ -1011,7 +1011,7 @@ func TestRefreshToken_NotInRedis(t *testing.T) {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	_, err = service.RefreshToken(context.Background(), token, "nonexistent-session")
+	_, err = service.RefreshToken(context.Background(), token, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 	if err == nil {
 		t.Error("RefreshToken() should fail if token not in Redis")
@@ -1034,7 +1034,7 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 	}
 
 	// Store token1 in Redis but try to refresh with token2
-	testSessionID := "test-session-id"
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	_ = mr.Set("refresh_token:1:"+testSessionID, token1)
 
 	_, err = service.RefreshToken(context.Background(), token2, testSessionID)
@@ -1052,7 +1052,7 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
-	testSessionID := "test-session-id"
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	_ = mr.Set("refresh_token:1:"+testSessionID, token)
 
 	// Close Redis to simulate failure

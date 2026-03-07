@@ -200,6 +200,7 @@ func TestLogin_Success(t *testing.T) {
 				ExpiresIn:    900,
 				UserID:       1,
 				Username:     "testuser",
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}
@@ -256,6 +257,9 @@ func TestLogin_Success(t *testing.T) {
 		}
 		if cookie.Name == SessionIDCookie {
 			hasSession = true
+			if cookie.Value != "session_abc123" {
+				t.Errorf("session_id value = %s, want session_abc123", cookie.Value)
+			}
 		}
 	}
 	if !hasAccess {
@@ -344,6 +348,7 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 				UserID:       1,
 				Username:     "admin",
 				Scopes:       map[string]string{"profile": "edit", "projects": "delete"},
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}
@@ -405,6 +410,7 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 				UserID:       1,
 				Username:     "testuser",
 				RememberMe:   true,
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}
@@ -423,7 +429,7 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
-	var foundAccess, foundRefresh bool
+	var foundAccess, foundRefresh, foundSession bool
 	for _, cookie := range cookies {
 		if cookie.Name == AccessTokenCookie {
 			foundAccess = true
@@ -437,12 +443,21 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 				t.Errorf("refresh_token MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
 			}
 		}
+		if cookie.Name == SessionIDCookie {
+			foundSession = true
+			if cookie.MaxAge <= 0 {
+				t.Errorf("session_id MaxAge = %d, want > 0 for persistent cookie", cookie.MaxAge)
+			}
+		}
 	}
 	if !foundAccess {
 		t.Error("access_token cookie not set")
 	}
 	if !foundRefresh {
 		t.Error("refresh_token cookie not set")
+	}
+	if !foundSession {
+		t.Error("session_id cookie not set")
 	}
 }
 
@@ -459,6 +474,7 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 				UserID:       1,
 				Username:     "testuser",
 				RememberMe:   false,
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}
@@ -477,7 +493,7 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 	}
 
 	cookies := w.Result().Cookies()
-	var foundAccess, foundRefresh bool
+	var foundAccess, foundRefresh, foundSession bool
 	for _, cookie := range cookies {
 		if cookie.Name == AccessTokenCookie {
 			foundAccess = true
@@ -491,12 +507,21 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 				t.Errorf("refresh_token MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
 			}
 		}
+		if cookie.Name == SessionIDCookie {
+			foundSession = true
+			if cookie.MaxAge != 0 {
+				t.Errorf("session_id MaxAge = %d, want 0 for session cookie", cookie.MaxAge)
+			}
+		}
 	}
 	if !foundAccess {
 		t.Error("access_token cookie not set")
 	}
 	if !foundRefresh {
 		t.Error("refresh_token cookie not set")
+	}
+	if !foundSession {
+		t.Error("session_id cookie not set")
 	}
 }
 
@@ -512,6 +537,7 @@ func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 				ExpiresIn:    900,
 				UserID:       1,
 				Username:     "testuser",
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}
@@ -1259,6 +1285,7 @@ func TestLogin_TokensNotInResponseBody(t *testing.T) {
 				ExpiresIn:    900,
 				UserID:       1,
 				Username:     "testuser",
+				SessionID:    "session_abc123",
 			}, nil
 		},
 	}

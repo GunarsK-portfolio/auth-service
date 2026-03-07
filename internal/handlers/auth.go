@@ -187,6 +187,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	if response.SessionID == "" {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, errors.New("empty session ID"), "login failed")
+		return
+	}
+
 	// Set httpOnly cookies instead of returning tokens in body
 	h.cookieHelper.SetAuthCookies(
 		c,
@@ -278,6 +283,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, sessionID)
 	if err != nil {
 		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
+		return
+	}
+
+	if response.SessionID == "" {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, errors.New("empty session ID"), "refresh failed")
 		return
 	}
 
