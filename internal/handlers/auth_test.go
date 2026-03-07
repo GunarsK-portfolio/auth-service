@@ -730,7 +730,7 @@ func TestLogout_Success_Cookie(t *testing.T) {
 	// Verify cookies are cleared (MaxAge=-1)
 	cookies := w.Result().Cookies()
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie || cookie.Name == RefreshTokenCookie {
+		if cookie.Name == AccessTokenCookie || cookie.Name == RefreshTokenCookie || cookie.Name == SessionIDCookie {
 			if cookie.MaxAge != -1 {
 				t.Errorf("cookie %s should have MaxAge=-1, got %d", cookie.Name, cookie.MaxAge)
 			}
@@ -777,6 +777,32 @@ func TestLogout_NoToken(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestLogout_NoSessionCookie(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
+
+	handler.Logout(c)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+
+	// Verify stale cookies are cleared
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == AccessTokenCookie || cookie.Name == RefreshTokenCookie || cookie.Name == SessionIDCookie {
+			if cookie.MaxAge != -1 {
+				t.Errorf("cookie %s should have MaxAge=-1, got %d", cookie.Name, cookie.MaxAge)
+			}
+		}
 	}
 }
 
@@ -870,6 +896,23 @@ func TestRefresh_NoToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
+
+	handler.Refresh(c)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestRefresh_NoSessionCookie(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/refresh", nil)
+	c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: "some_refresh_token"})
 
 	handler.Refresh(c)
 

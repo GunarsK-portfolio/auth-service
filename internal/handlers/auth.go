@@ -239,6 +239,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	sessionID := h.cookieHelper.GetSessionID(c)
 	if sessionID == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
 		return
 	}
