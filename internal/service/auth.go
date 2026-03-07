@@ -27,8 +27,9 @@ var (
 	// ErrInvalidRoleCode is returned when the provided role code doesn't exist.
 	ErrInvalidRoleCode = errors.New("invalid role code")
 	// ErrRoleNotAllowed is returned when the role code is not permitted for self-registration.
-	ErrRoleNotAllowed  = errors.New("role not allowed for self-registration")
-	ErrPasswordTooLong = errors.New("password exceeds 72 bytes")
+	ErrRoleNotAllowed      = errors.New("role not allowed for self-registration")
+	ErrPasswordTooLong     = errors.New("password exceeds 72 bytes")
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 )
 
 // LoginRequest contains credentials for user login.
@@ -169,18 +170,18 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 
 func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID string) (*LoginResponse, error) {
 	if _, err := uuid.Parse(sessionID); err != nil {
-		return nil, errors.New("invalid refresh token")
+		return nil, ErrInvalidRefreshToken
 	}
 
 	claims, err := s.jwtService.ValidateToken(refreshToken)
 	if err != nil {
-		return nil, errors.New("invalid refresh token")
+		return nil, ErrInvalidRefreshToken
 	}
 
 	// Check if refresh token exists in Redis for this session
 	storedToken, err := s.redis.Get(ctx, fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID)).Result()
 	if err != nil || storedToken != refreshToken {
-		return nil, errors.New("invalid refresh token")
+		return nil, ErrInvalidRefreshToken
 	}
 
 	// Read remember_me preference from Redis (default false on key miss)

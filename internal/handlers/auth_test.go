@@ -276,7 +276,7 @@ func TestLogin_Success(t *testing.T) {
 func TestLogin_InvalidCredentials(t *testing.T) {
 	mockService := &mockAuthService{
 		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
-			return nil, errors.New("invalid credentials")
+			return nil, service.ErrInvalidCredentials
 		},
 	}
 
@@ -580,8 +580,10 @@ func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 }
 
 func TestRefresh_PreservesRememberMe(t *testing.T) {
+	var capturedSessionID string
 	mockService := &mockAuthService{
 		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
+			capturedSessionID = sessionID
 			return &service.LoginResponse{
 				AccessToken:  "new_access_token",
 				RefreshToken: "new_refresh_token",
@@ -605,6 +607,10 @@ func TestRefresh_PreservesRememberMe(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	if capturedSessionID != "test-session-id" {
+		t.Errorf("expected sessionID=test-session-id, got %s", capturedSessionID)
 	}
 
 	cookies := w.Result().Cookies()
@@ -706,8 +712,11 @@ func TestRefresh_SessionCookiesWhenNotRemembered(t *testing.T) {
 // =============================================================================
 
 func TestLogout_Success_Cookie(t *testing.T) {
+	var capturedToken, capturedSessionID string
 	mockService := &mockAuthService{
 		logoutFunc: func(ctx context.Context, token, sessionID string) error {
+			capturedToken = token
+			capturedSessionID = sessionID
 			return nil
 		},
 	}
@@ -727,6 +736,13 @@ func TestLogout_Success_Cookie(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
+	if capturedToken != "valid_token" {
+		t.Errorf("expected token=valid_token, got %s", capturedToken)
+	}
+	if capturedSessionID != "test-session-id" {
+		t.Errorf("expected sessionID=test-session-id, got %s", capturedSessionID)
+	}
+
 	// Verify cookies are cleared (MaxAge=-1)
 	cookies := w.Result().Cookies()
 	for _, cookie := range cookies {
@@ -739,11 +755,13 @@ func TestLogout_Success_Cookie(t *testing.T) {
 }
 
 func TestLogout_Success_Header(t *testing.T) {
+	var capturedSessionID string
 	mockService := &mockAuthService{
 		logoutFunc: func(ctx context.Context, token, sessionID string) error {
 			if token != "header_token" {
 				t.Errorf("expected token=header_token, got %s", token)
 			}
+			capturedSessionID = sessionID
 			return nil
 		},
 	}
@@ -761,6 +779,10 @@ func TestLogout_Success_Header(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	if capturedSessionID != "test-session-id" {
+		t.Errorf("expected sessionID=test-session-id, got %s", capturedSessionID)
 	}
 }
 
@@ -924,7 +946,7 @@ func TestRefresh_NoSessionCookie(t *testing.T) {
 func TestRefresh_InvalidToken(t *testing.T) {
 	mockService := &mockAuthService{
 		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
-			return nil, errors.New("invalid refresh token")
+			return nil, service.ErrInvalidRefreshToken
 		},
 	}
 

@@ -177,13 +177,20 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password, req.RememberMe)
 	if err != nil {
-		// Log failed login attempt
 		source := "auth-service"
-		_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-			"username": req.Username,
-			"reason":   "invalid_credentials",
-		})
-		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "invalid_credentials",
+			})
+			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
+		} else {
+			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "internal_error",
+			})
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "login failed")
+		}
 		return
 	}
 
@@ -283,7 +290,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, sessionID)
 	if err != nil {
-		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
+		} else {
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "refresh failed")
+		}
 		return
 	}
 
