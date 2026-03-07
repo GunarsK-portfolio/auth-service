@@ -872,6 +872,23 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	}
 }
 
+func TestLogout_SessionNotFound(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	// Generate valid token but don't create a session in Redis
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	err = service.Logout(context.Background(), token, "nonexistent-session")
+
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("Logout() error = %v, want %v", err, ErrSessionNotFound)
+	}
+}
+
 func TestLogout_RedisFailure(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 

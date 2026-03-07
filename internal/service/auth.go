@@ -30,6 +30,7 @@ var (
 	ErrRoleNotAllowed      = errors.New("role not allowed for self-registration")
 	ErrPasswordTooLong     = errors.New("password exceeds 72 bytes")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	ErrSessionNotFound     = errors.New("session not found")
 )
 
 // LoginRequest contains credentials for user login.
@@ -158,11 +159,15 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 	}
 
 	// Remove only this session's refresh token and remember_me from Redis
-	if err := s.redis.Del(ctx,
+	deleted, err := s.redis.Del(ctx,
 		fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID),
 		fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID),
-	).Err(); err != nil {
+	).Result()
+	if err != nil {
 		return fmt.Errorf("failed to invalidate session: %w", err)
+	}
+	if deleted == 0 {
+		return ErrSessionNotFound
 	}
 
 	return nil

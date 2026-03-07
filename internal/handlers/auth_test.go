@@ -851,6 +851,29 @@ func TestLogout_ServiceError(t *testing.T) {
 	}
 }
 
+func TestLogout_SessionNotFound(t *testing.T) {
+	mockService := &mockAuthService{
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
+			return service.ErrSessionNotFound
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "valid_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "bogus-session-id"})
+
+	handler.Logout(c)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
 // =============================================================================
 // Refresh Handler Tests
 // =============================================================================

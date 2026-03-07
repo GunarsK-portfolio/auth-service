@@ -252,7 +252,12 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	if err := h.authService.Logout(c.Request.Context(), token, sessionID); err != nil {
-		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
+		if errors.Is(err, service.ErrSessionNotFound) {
+			h.cookieHelper.ClearAuthCookies(c)
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		} else {
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
+		}
 		return
 	}
 
