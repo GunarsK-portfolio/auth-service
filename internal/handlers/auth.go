@@ -252,10 +252,14 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	if err := h.authService.Logout(c.Request.Context(), token, sessionID); err != nil {
-		if errors.Is(err, service.ErrSessionNotFound) {
+		switch {
+		case errors.Is(err, service.ErrInvalidToken):
+			h.cookieHelper.ClearAuthCookies(c)
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "invalid or expired token")
+		case errors.Is(err, service.ErrSessionNotFound):
 			h.cookieHelper.ClearAuthCookies(c)
 			commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
-		} else {
+		default:
 			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
 		}
 		return

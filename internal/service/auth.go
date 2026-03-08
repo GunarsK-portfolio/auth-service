@@ -31,6 +31,7 @@ var (
 	ErrPasswordTooLong     = errors.New("password exceeds 72 bytes")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrSessionNotFound     = errors.New("session not found")
+	ErrInvalidToken        = errors.New("invalid or expired token")
 )
 
 // LoginRequest contains credentials for user login.
@@ -155,7 +156,7 @@ func (s *authService) Login(ctx context.Context, username, password string, reme
 func (s *authService) Logout(ctx context.Context, token, sessionID string) error {
 	claims, err := s.jwtService.ValidateToken(token)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 
 	// Remove only this session's refresh token and remember_me from Redis
@@ -185,7 +186,13 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 
 	// Check if refresh token exists in Redis for this session
 	storedToken, err := s.redis.Get(ctx, fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID)).Result()
-	if err != nil || storedToken != refreshToken {
+	if errors.Is(err, redis.Nil) {
+		return nil, ErrInvalidRefreshToken
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read refresh token: %w", err)
+	}
+	if storedToken != refreshToken {
 		return nil, ErrInvalidRefreshToken
 	}
 

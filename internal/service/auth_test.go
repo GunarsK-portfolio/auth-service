@@ -1080,6 +1080,9 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 	if err == nil {
 		t.Error("RefreshToken() should fail when Redis is unavailable")
 	}
+	if errors.Is(err, ErrInvalidRefreshToken) {
+		t.Error("RefreshToken() should return internal error, not ErrInvalidRefreshToken, on Redis failure")
+	}
 }
 
 // =============================================================================

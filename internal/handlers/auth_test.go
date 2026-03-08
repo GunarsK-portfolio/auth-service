@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -848,6 +849,29 @@ func TestLogout_ServiceError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+func TestLogout_InvalidToken(t *testing.T) {
+	mockService := &mockAuthService{
+		logoutFunc: func(ctx context.Context, token, sessionID string) error {
+			return fmt.Errorf("%w: token expired", service.ErrInvalidToken)
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/v1/auth/logout", nil)
+	c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: "expired_token"})
+	c.Request.AddCookie(&http.Cookie{Name: SessionIDCookie, Value: "test-session-id"})
+
+	handler.Logout(c)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
 	}
 }
 
