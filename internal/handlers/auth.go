@@ -240,6 +240,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		token = extractToken(c)
 	}
 	if token == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -287,12 +288,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Get refresh token and session ID from cookies
 	refreshToken := h.cookieHelper.GetRefreshToken(c)
 	if refreshToken == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "refresh token required")
 		return
 	}
 
 	sessionID := h.cookieHelper.GetSessionID(c)
 	if sessionID == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
 		return
 	}
