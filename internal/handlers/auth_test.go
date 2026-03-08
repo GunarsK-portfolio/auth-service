@@ -1011,6 +1011,18 @@ func TestRefresh_InvalidToken(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
 	}
+
+	// Verify cookies are cleared on invalid refresh
+	cookies := w.Result().Cookies()
+	clearedCount := 0
+	for _, cookie := range cookies {
+		if cookie.MaxAge < 0 {
+			clearedCount++
+		}
+	}
+	if clearedCount == 0 {
+		t.Error("Refresh() should clear auth cookies on invalid refresh token")
+	}
 }
 
 // =============================================================================

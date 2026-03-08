@@ -300,6 +300,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, sessionID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			h.cookieHelper.ClearAuthCookies(c)
 			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
 		} else {
 			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "refresh failed")
