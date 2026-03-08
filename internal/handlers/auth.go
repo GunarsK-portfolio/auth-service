@@ -177,13 +177,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password, req.RememberMe)
 	if err != nil {
-		// Log failed login attempt
 		source := "auth-service"
-		_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-			"username": req.Username,
-			"reason":   "invalid_credentials",
-		})
-		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "invalid_credentials",
+			})
+			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
+		} else {
+			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
+				"username": req.Username,
+				"reason":   "internal_error",
+			})
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "login failed")
+		}
+		return
+	}
+
+	if response.SessionID == "" {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, errors.New("empty session ID"), "login failed")
 		return
 	}
 
@@ -196,6 +208,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		h.jwtService.GetRefreshExpiry(),
 		response.RememberMe,
 	)
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, response.RememberMe, h.jwtService.GetRefreshExpiry())
 
 	// Log successful login with explicit user_id
 	source := "auth-service"
@@ -227,12 +240,29 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		token = extractToken(c)
 	}
 	if token == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	if err := h.authService.Logout(c.Request.Context(), token); err != nil {
-		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
+	sessionID := h.cookieHelper.GetSessionID(c)
+	if sessionID == "" {
+		h.cookieHelper.ClearAuthCookies(c)
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		return
+	}
+
+	if err := h.authService.Logout(c.Request.Context(), token, sessionID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidToken):
+			h.cookieHelper.ClearAuthCookies(c)
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "invalid or expired token")
+		case errors.Is(err, service.ErrSessionNotFound):
+			h.cookieHelper.ClearAuthCookies(c)
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "logout failed")
+		}
 		return
 	}
 
@@ -255,16 +285,34 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Failure 401 {object} map[string]string
 // @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	// Get refresh token from cookie
+	// Get refresh token and session ID from cookies
 	refreshToken := h.cookieHelper.GetRefreshToken(c)
 	if refreshToken == "" {
+		h.cookieHelper.ClearAuthCookies(c)
 		commonHandlers.RespondError(c, http.StatusUnauthorized, "refresh token required")
 		return
 	}
 
-	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken)
+	sessionID := h.cookieHelper.GetSessionID(c)
+	if sessionID == "" {
+		h.cookieHelper.ClearAuthCookies(c)
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "session not found")
+		return
+	}
+
+	response, err := h.authService.RefreshToken(c.Request.Context(), refreshToken, sessionID)
 	if err != nil {
-		commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
+		if errors.Is(err, service.ErrInvalidRefreshToken) {
+			h.cookieHelper.ClearAuthCookies(c)
+			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid refresh token")
+		} else {
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "refresh failed")
+		}
+		return
+	}
+
+	if response.SessionID == "" {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, errors.New("empty session ID"), "refresh failed")
 		return
 	}
 
@@ -277,6 +325,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		h.jwtService.GetRefreshExpiry(),
 		response.RememberMe,
 	)
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, response.RememberMe, h.jwtService.GetRefreshExpiry())
 
 	// Log token refresh
 	source := "auth-service"

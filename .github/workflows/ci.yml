@@ -8,8 +8,8 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 env:
-  GO_VERSION: '1.25.7'
-  GOLANGCI_LINT_VERSION: 'v2.5.0'
+  GO_VERSION: '1.26.1'
+  GOLANGCI_LINT_VERSION: 'v2.11.1'
 
 jobs:
   # Job 1: Lint Go code
@@ -160,7 +160,7 @@ jobs:
           cache: true
 
       - name: Run gosec Security Scanner
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.24.7
         with:
           args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
 
@@ -181,7 +181,7 @@ jobs:
           fetch-depth: 0 # Full history for scanning
 
       - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.93.3
         with:
           path: ./
           base: ""

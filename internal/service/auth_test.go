@@ -195,8 +195,12 @@ func TestLogin_Success(t *testing.T) {
 		t.Error("Login() should return positive expires_in")
 	}
 
-	// Verify refresh token was stored in Redis
-	stored, err := mr.Get("refresh_token:1")
+	if result.SessionID == "" {
+		t.Error("Login() should return a session ID")
+	}
+
+	// Verify refresh token was stored in Redis with session ID
+	stored, err := mr.Get("refresh_token:1:" + result.SessionID)
 	if err != nil || stored != result.RefreshToken {
 		t.Error("Login() should store refresh token in Redis")
 	}
@@ -357,13 +361,13 @@ func TestLogin_RememberMe_StoresInRedis(t *testing.T) {
 		t.Error("Login() RememberMe should be true")
 	}
 
-	// Verify remember_me was stored in Redis
-	val, err := mr.Get("remember_me:1")
+	// Verify remember_me was stored in Redis with session ID
+	val, err := mr.Get("remember_me:1:" + result.SessionID)
 	if err != nil {
-		t.Fatal("remember_me:1 should exist in Redis")
+		t.Fatal("remember_me should exist in Redis")
 	}
 	if val != "1" {
-		t.Errorf("remember_me:1 = %s, want 1", val)
+		t.Errorf("remember_me = %s, want 1", val)
 	}
 }
 
@@ -391,12 +395,12 @@ func TestLogin_NoRememberMe_StoresFalseInRedis(t *testing.T) {
 		t.Error("Login() RememberMe should be false")
 	}
 
-	val, err := mr.Get("remember_me:1")
+	val, err := mr.Get("remember_me:1:" + result.SessionID)
 	if err != nil {
-		t.Fatal("remember_me:1 should exist in Redis")
+		t.Fatal("remember_me should exist in Redis")
 	}
 	if val != "0" {
-		t.Errorf("remember_me:1 = %s, want 0", val)
+		t.Errorf("remember_me = %s, want 0", val)
 	}
 }
 
@@ -423,7 +427,7 @@ func TestRefreshToken_PreservesRememberMe(t *testing.T) {
 	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh should preserve remember_me=true
-	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
 	}
@@ -432,13 +436,17 @@ func TestRefreshToken_PreservesRememberMe(t *testing.T) {
 		t.Error("RefreshToken() should preserve RememberMe=true")
 	}
 
+	if refreshResult.SessionID != loginResult.SessionID {
+		t.Errorf("RefreshToken() SessionID = %q, want %q", refreshResult.SessionID, loginResult.SessionID)
+	}
+
 	// Verify remember_me key still exists with value "1"
-	val, err := mr.Get("remember_me:1")
+	val, err := mr.Get("remember_me:1:" + loginResult.SessionID)
 	if err != nil {
-		t.Fatal("remember_me:1 should still exist after refresh")
+		t.Fatal("remember_me should still exist after refresh")
 	}
 	if val != "1" {
-		t.Errorf("remember_me:1 = %s, want 1 after refresh", val)
+		t.Errorf("remember_me = %s, want 1 after refresh", val)
 	}
 }
 
@@ -465,7 +473,7 @@ func TestRefreshToken_RememberMeFalsePreserved(t *testing.T) {
 	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh should preserve remember_me=false
-	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
 	}
@@ -496,11 +504,11 @@ func TestRefreshToken_RememberMeDefaultsFalseOnMiss(t *testing.T) {
 	}
 
 	// Manually delete the remember_me key to simulate a miss
-	mr.Del("remember_me:1")
+	mr.Del("remember_me:1:" + loginResult.SessionID)
 
 	time.Sleep(jwtTimestampBuffer)
 
-	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
 	}
@@ -531,24 +539,26 @@ func TestLogout_CleansUpRememberMe(t *testing.T) {
 	}
 
 	// Verify both keys exist
-	if !mr.Exists("refresh_token:1") {
-		t.Fatal("refresh_token:1 should exist before logout")
+	rtKey := "refresh_token:1:" + loginResult.SessionID
+	rmKey := "remember_me:1:" + loginResult.SessionID
+	if !mr.Exists(rtKey) {
+		t.Fatal("refresh_token should exist before logout")
 	}
-	if !mr.Exists("remember_me:1") {
-		t.Fatal("remember_me:1 should exist before logout")
+	if !mr.Exists(rmKey) {
+		t.Fatal("remember_me should exist before logout")
 	}
 
 	// Logout
-	err = service.Logout(context.Background(), loginResult.AccessToken)
+	err = service.Logout(context.Background(), loginResult.AccessToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}
 
 	// Verify both keys are deleted
-	if mr.Exists("refresh_token:1") {
+	if mr.Exists(rtKey) {
 		t.Error("Logout() should remove refresh_token from Redis")
 	}
-	if mr.Exists("remember_me:1") {
+	if mr.Exists(rmKey) {
 		t.Error("Logout() should remove remember_me from Redis")
 	}
 }
@@ -694,7 +704,7 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh token
-	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
 	}
@@ -761,7 +771,7 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh token - should preserve ORIGINAL scopes, not new ones
-	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
 	}
@@ -806,19 +816,20 @@ func TestLogout_Success(t *testing.T) {
 	}
 
 	// Verify token exists in Redis
-	if !mr.Exists("refresh_token:1") {
+	rtKey := "refresh_token:1:" + loginResult.SessionID
+	if !mr.Exists(rtKey) {
 		t.Fatal("Refresh token should exist in Redis before logout")
 	}
 
 	// Logout
-	err = service.Logout(context.Background(), loginResult.AccessToken)
+	err = service.Logout(context.Background(), loginResult.AccessToken, loginResult.SessionID)
 
 	if err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}
 
 	// Verify token was removed from Redis
-	if mr.Exists("refresh_token:1") {
+	if mr.Exists(rtKey) {
 		t.Error("Logout() should remove refresh token from Redis")
 	}
 }
@@ -827,7 +838,7 @@ func TestLogout_InvalidToken(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	err := service.Logout(context.Background(), "invalid-token")
+	err := service.Logout(context.Background(), "invalid-token", "any-session")
 
 	if err == nil {
 		t.Error("Logout() should fail for invalid token")
@@ -854,10 +865,27 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	time.Sleep(shortExpiry + 100*time.Millisecond)
 
 	// Try to logout with expired token
-	err = service.Logout(context.Background(), token)
+	err = service.Logout(context.Background(), token, "any-session")
 
 	if err == nil {
 		t.Error("Logout() should fail for expired token")
+	}
+}
+
+func TestLogout_SessionNotFound(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	// Generate valid token but don't create a session in Redis
+	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	err = service.Logout(context.Background(), token, "nonexistent-session")
+
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("Logout() error = %v, want %v", err, ErrSessionNotFound)
 	}
 }
 
@@ -873,7 +901,7 @@ func TestLogout_RedisFailure(t *testing.T) {
 	// Close Redis to simulate failure
 	mr.Close()
 
-	err = service.Logout(context.Background(), token)
+	err = service.Logout(context.Background(), token, "any-session")
 
 	if err == nil {
 		t.Error("Logout() should fail when Redis is unavailable")
@@ -910,7 +938,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	time.Sleep(jwtTimestampBuffer)
 
 	// Refresh token
-	result, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+	result, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
@@ -929,7 +957,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	}
 
 	// Verify new refresh token is stored in Redis
-	stored, err := mr.Get("refresh_token:1")
+	stored, err := mr.Get("refresh_token:1:" + loginResult.SessionID)
 	if err != nil || stored != result.RefreshToken {
 		t.Error("RefreshToken() should update refresh token in Redis")
 	}
@@ -939,10 +967,23 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 	service, mr, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	_, err := service.RefreshToken(context.Background(), "invalid-token")
+	_, err := service.RefreshToken(context.Background(), "invalid-token", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 	if err == nil {
 		t.Error("RefreshToken() should fail for invalid token")
+	}
+}
+
+func TestRefreshToken_MalformedSessionID(t *testing.T) {
+	service, mr, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	_, err := service.RefreshToken(context.Background(), "any-token", "not-a-uuid")
+	if err == nil {
+		t.Error("RefreshToken() should reject malformed sessionID")
+	}
+	if err.Error() != "invalid refresh token" {
+		t.Errorf("RefreshToken() error = %q, want %q", err.Error(), "invalid refresh token")
 	}
 }
 
@@ -963,13 +1004,14 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	}
 
 	// Store in Redis
-	_ = mr.Set("refresh_token:1", token)
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	_ = mr.Set("refresh_token:1:"+testSessionID, token)
 
 	// Wait for expiry
 	time.Sleep(shortExpiry + 100*time.Millisecond)
 
 	// Try to refresh with expired token
-	_, err = service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token, testSessionID)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail for expired token")
@@ -986,7 +1028,7 @@ func TestRefreshToken_NotInRedis(t *testing.T) {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	_, err = service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 	if err == nil {
 		t.Error("RefreshToken() should fail if token not in Redis")
@@ -1009,9 +1051,10 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 	}
 
 	// Store token1 in Redis but try to refresh with token2
-	_ = mr.Set("refresh_token:1", token1)
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	_ = mr.Set("refresh_token:1:"+testSessionID, token1)
 
-	_, err = service.RefreshToken(context.Background(), token2)
+	_, err = service.RefreshToken(context.Background(), token2, testSessionID)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail if token doesn't match stored token")
@@ -1026,15 +1069,19 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
-	_ = mr.Set("refresh_token:1", token)
+	testSessionID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	_ = mr.Set("refresh_token:1:"+testSessionID, token)
 
 	// Close Redis to simulate failure
 	mr.Close()
 
-	_, err = service.RefreshToken(context.Background(), token)
+	_, err = service.RefreshToken(context.Background(), token, testSessionID)
 
 	if err == nil {
 		t.Error("RefreshToken() should fail when Redis is unavailable")
+	}
+	if errors.Is(err, ErrInvalidRefreshToken) {
+		t.Error("RefreshToken() should return internal error, not ErrInvalidRefreshToken, on Redis failure")
 	}
 }
 
@@ -1206,7 +1253,7 @@ func TestConcurrentRefreshToken(t *testing.T) {
 	// Multiple concurrent refresh attempts with same token
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
-			result, err := service.RefreshToken(context.Background(), loginResult.RefreshToken)
+			result, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 			errors <- err
 			results <- result
 		}()
