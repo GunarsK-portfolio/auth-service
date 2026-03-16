@@ -3,35 +3,40 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
+	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var (
-	// ErrInvalidCredentials is returned when login credentials are invalid.
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	// ErrUserNotFound is returned when user is not found.
-	ErrUserNotFound = errors.New("user not found")
-	// ErrUsernameTaken is returned when the username is already in use.
-	ErrUsernameTaken = errors.New("username already taken")
-	// ErrEmailTaken is returned when the email is already in use.
-	ErrEmailTaken = errors.New("email already taken")
-	// ErrInvalidRoleCode is returned when the provided role code doesn't exist.
-	ErrInvalidRoleCode = errors.New("invalid role code")
-	// ErrRoleNotAllowed is returned when the role code is not permitted for self-registration.
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrUserNotFound        = errors.New("user not found")
+	ErrUsernameTaken       = errors.New("username already taken")
+	ErrEmailTaken          = errors.New("email already taken")
+	ErrInvalidRoleCode     = errors.New("invalid role code")
 	ErrRoleNotAllowed      = errors.New("role not allowed for self-registration")
 	ErrPasswordTooLong     = errors.New("password exceeds 72 bytes")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrSessionNotFound     = errors.New("session not found")
 	ErrInvalidToken        = errors.New("invalid or expired token")
+	ErrAlreadyVerified     = errors.New("email already verified")
+	ErrTokenNotFound       = errors.New("verification token not found")
+	ErrTokenEmailMismatch  = errors.New("verification token email does not match current email")
+	ErrRateLimited         = errors.New("rate limit exceeded")
+	ErrPasswordMismatch    = errors.New("current password is incorrect")
+	ErrEmailNotConfigured  = errors.New("email service not configured")
 )
 
 // LoginRequest contains credentials for user login.
@@ -42,14 +47,17 @@ type LoginRequest struct {
 
 // LoginResponse contains JWT tokens returned after successful login.
 type LoginResponse struct {
-	AccessToken  string            `json:"access_token"`
-	RefreshToken string            `json:"refresh_token"`
-	ExpiresIn    int64             `json:"expires_in"`
-	UserID       int64             `json:"-"` // Not exposed in JSON, only for internal use
-	Username     string            `json:"-"` // Not exposed in JSON, only for internal use
-	Scopes       map[string]string `json:"-"` // Not exposed in JSON, only for internal use
-	RememberMe   bool              `json:"-"` // Not exposed in JSON, only for internal use
-	SessionID    string            `json:"-"` // Not exposed in JSON, only for internal use
+	AccessToken   string            `json:"access_token"`
+	RefreshToken  string            `json:"refresh_token"`
+	ExpiresIn     int64             `json:"expires_in"`
+	UserID        int64             `json:"-"`
+	Username      string            `json:"-"`
+	Email         string            `json:"-"`
+	EmailVerified bool              `json:"-"`
+	DisplayName   string            `json:"-"`
+	Scopes        map[string]string `json:"-"`
+	RememberMe    bool              `json:"-"`
+	SessionID     string            `json:"-"`
 }
 
 // RegisterRequest contains data for user registration.
@@ -67,6 +75,27 @@ type RegisterResponse struct {
 	Email    string `json:"email"`
 }
 
+// ProfileUpdateRequest contains fields for updating user profile.
+type ProfileUpdateRequest struct {
+	Email       *string `json:"email"`
+	DisplayName *string `json:"display_name"`
+}
+
+// ProfileResponse contains user profile data.
+type ProfileResponse struct {
+	UserID        int64   `json:"user_id"`
+	Username      string  `json:"username"`
+	Email         string  `json:"email"`
+	EmailVerified bool    `json:"email_verified"`
+	DisplayName   *string `json:"display_name"`
+}
+
+// ChangePasswordRequest contains data for changing password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 // AuthService defines authentication operations.
 type AuthService interface {
 	Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error)
@@ -75,27 +104,64 @@ type AuthService interface {
 	ValidateToken(token string) (int64, error)
 	ValidateTokenWithClaims(token string) (int64, *jwt.Claims, error)
 	Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error)
+	SendVerification(ctx context.Context, userID int64, emailFromClaims, origin string) error
+	VerifyEmail(ctx context.Context, token string) error
+	UpdateProfile(ctx context.Context, userID int64, req ProfileUpdateRequest) (*ProfileResponse, error)
+	ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error
 }
 
 type authService struct {
+	db                    *gorm.DB
 	userRepo              repository.UserRepository
+	verifyRepo            repository.VerificationTokenRepository
 	jwtService            jwt.Service
+	jwtSecret             string
 	redis                 *redis.Client
+	emailClient           *email.Client
 	deniedSelfAssignRoles map[string]bool
+	verifyRateLimitMax    int64
+	verifyRateLimitWindow time.Duration
 }
 
 // NewAuthService creates a new AuthService instance.
-func NewAuthService(userRepo repository.UserRepository, jwtService jwt.Service, redisClient *redis.Client, deniedRoles []string) AuthService {
+func NewAuthService(
+	db *gorm.DB,
+	userRepo repository.UserRepository,
+	verifyRepo repository.VerificationTokenRepository,
+	jwtService jwt.Service,
+	jwtSecret string,
+	redisClient *redis.Client,
+	emailClient *email.Client,
+	deniedRoles []string,
+	verifyRateLimitMax int64,
+	verifyRateLimitWindow time.Duration,
+) AuthService {
 	denied := make(map[string]bool, len(deniedRoles))
 	for _, r := range deniedRoles {
 		denied[r] = true
 	}
 	return &authService{
+		db:                    db,
 		userRepo:              userRepo,
+		verifyRepo:            verifyRepo,
 		jwtService:            jwtService,
+		jwtSecret:             jwtSecret,
 		redis:                 redisClient,
+		emailClient:           emailClient,
 		deniedSelfAssignRoles: denied,
+		verifyRateLimitMax:    verifyRateLimitMax,
+		verifyRateLimitWindow: verifyRateLimitWindow,
 	}
+}
+
+// runInTx executes fn inside a database transaction when a DB handle is
+// available. In test environments where db is nil the callback receives nil
+// (callers must guard repo construction accordingly).
+func (s *authService) runInTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if s.db == nil {
+		return fn(nil)
+	}
+	return s.db.WithContext(ctx).Transaction(fn)
 }
 
 func (s *authService) Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error) {
@@ -108,19 +174,22 @@ func (s *authService) Login(ctx context.Context, username, password string, reme
 		return nil, ErrInvalidCredentials
 	}
 
-	// Get user scopes from role
 	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
 	if err != nil {
-		// Return generic error to prevent user enumeration
 		return nil, ErrInvalidCredentials
 	}
 
-	accessToken, err := s.jwtService.GenerateAccessToken(user.ID, user.Username, scopes)
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+
+	accessToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetAccessExpiry())
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Username, scopes)
+	refreshToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetRefreshExpiry())
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +197,6 @@ func (s *authService) Login(ctx context.Context, username, password string, reme
 	refreshExpiry := s.jwtService.GetRefreshExpiry()
 	sessionID := uuid.New().String()
 
-	// Store refresh token and remember_me atomically (per-session keys)
 	rememberVal := "0"
 	if rememberMe {
 		rememberVal = "1"
@@ -142,14 +210,17 @@ func (s *authService) Login(ctx context.Context, username, password string, reme
 	}
 
 	return &LoginResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int64(s.jwtService.GetAccessExpiry().Seconds()),
-		UserID:       user.ID,
-		Username:     user.Username,
-		Scopes:       scopes,
-		RememberMe:   rememberMe,
-		SessionID:    sessionID,
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		ExpiresIn:     int64(s.jwtService.GetAccessExpiry().Seconds()),
+		UserID:        user.ID,
+		Username:      user.Username,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		DisplayName:   displayName,
+		Scopes:        scopes,
+		RememberMe:    rememberMe,
+		SessionID:     sessionID,
 	}, nil
 }
 
@@ -159,7 +230,6 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 		return fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 
-	// Remove only this session's refresh token and remember_me from Redis
 	deleted, err := s.redis.Del(ctx,
 		fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID),
 		fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID),
@@ -184,7 +254,6 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		return nil, ErrInvalidRefreshToken
 	}
 
-	// Check if refresh token exists in Redis for this session
 	storedToken, err := s.redis.Get(ctx, fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID)).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, ErrInvalidRefreshToken
@@ -196,7 +265,6 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		return nil, ErrInvalidRefreshToken
 	}
 
-	// Read remember_me preference from Redis (default false on key miss)
 	rememberMe := false
 	if val, err := s.redis.Get(ctx, fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID)).Result(); errors.Is(err, redis.Nil) {
 		// Key not found, keep default false
@@ -206,23 +274,36 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		rememberMe = val == "1"
 	}
 
-	// Generate new tokens using scopes from refresh token.
-	// Note: Scopes may become stale if user's role changes between refreshes.
-	// This is an intentional trade-off to avoid a database lookup on every refresh.
-	// Users must re-login to get updated scopes after role changes.
-	accessToken, err := s.jwtService.GenerateAccessToken(claims.UserID, claims.Username, claims.Scopes)
+	// Fetch fresh user data from DB so profile changes (email, display_name,
+	// email_verified) are picked up immediately on token refresh.
+	user, err := s.userRepo.FindByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user for refresh: %w", err)
+	}
+
+	// Re-fetch scopes so role changes are also picked up
+	freshScopes, err := s.userRepo.GetUserScopes(ctx, claims.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch scopes for refresh: %w", err)
+	}
+
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+
+	accessToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, freshScopes, s.jwtService.GetAccessExpiry())
 	if err != nil {
 		return nil, err
 	}
 
-	newRefreshToken, err := s.jwtService.GenerateRefreshToken(claims.UserID, claims.Username, claims.Scopes)
+	newRefreshToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, freshScopes, s.jwtService.GetRefreshExpiry())
 	if err != nil {
 		return nil, err
 	}
 
 	refreshExpiry := s.jwtService.GetRefreshExpiry()
 
-	// Update refresh token and remember_me atomically
 	rememberVal := "0"
 	if rememberMe {
 		rememberVal = "1"
@@ -250,7 +331,6 @@ func (s *authService) ValidateToken(token string) (int64, error) {
 		return 0, err
 	}
 
-	// Calculate TTL from expiry time
 	ttl := int64(time.Until(claims.ExpiresAt.Time).Seconds())
 	if ttl < 0 {
 		ttl = 0
@@ -265,7 +345,6 @@ func (s *authService) ValidateTokenWithClaims(token string) (int64, *jwt.Claims,
 		return 0, nil, err
 	}
 
-	// Calculate TTL from expiry time
 	ttl := int64(time.Until(claims.ExpiresAt.Time).Seconds())
 	if ttl < 0 {
 		ttl = 0
@@ -275,22 +354,18 @@ func (s *authService) ValidateTokenWithClaims(token string) (int64, *jwt.Claims,
 }
 
 func (s *authService) Register(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
-	// bcrypt silently truncates passwords longer than 72 bytes
 	if len([]byte(req.Password)) > 72 {
 		return nil, ErrPasswordTooLong
 	}
 
-	// Check if username is taken
 	if _, err := s.userRepo.FindByUsername(ctx, req.Username); err == nil {
 		return nil, ErrUsernameTaken
 	}
 
-	// Check if email is taken
 	if _, err := s.userRepo.FindByEmail(ctx, req.Email); err == nil {
 		return nil, ErrEmailTaken
 	}
 
-	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -302,7 +377,6 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		PasswordHash: string(hash),
 	}
 
-	// Resolve role if provided (privileged roles are blocked)
 	if req.RoleCode != "" {
 		if s.deniedSelfAssignRoles[req.RoleCode] {
 			return nil, ErrRoleNotAllowed
@@ -315,8 +389,34 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		user.RoleID = &roleID
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+	token, err := generateVerificationToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate verification token: %w", err)
+	}
+
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Create(ctx, user); err != nil {
+			return fmt.Errorf("failed to create user: %w", err)
+		}
+
+		vt := &models.VerificationToken{
+			UserID: user.ID,
+			Email:  user.Email,
+			Token:  token,
+		}
+		if err := verifyRepo.Create(ctx, vt); err != nil {
+			return fmt.Errorf("failed to store verification token: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &RegisterResponse{
@@ -324,4 +424,272 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		Username: user.Username,
 		Email:    user.Email,
 	}, nil
+}
+
+func (s *authService) SendVerification(ctx context.Context, userID int64, emailFromClaims, origin string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	if user.EmailVerified {
+		return ErrAlreadyVerified
+	}
+
+	if s.emailClient == nil {
+		return ErrEmailNotConfigured
+	}
+
+	rateLimitKey := fmt.Sprintf("verify_ratelimit:%d", userID)
+	count, err := s.redis.Incr(ctx, rateLimitKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check rate limit: %w", err)
+	}
+	if count == 1 {
+		if err := s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow).Err(); err != nil {
+			s.redis.Del(ctx, rateLimitKey)
+			return fmt.Errorf("failed to set rate limit expiry: %w", err)
+		}
+	}
+	if count > s.verifyRateLimitMax {
+		return ErrRateLimited
+	}
+
+	vt, err := s.verifyRepo.FindByUserID(ctx, userID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to find verification token: %w", err)
+	}
+	if err != nil {
+		// Old accounts may not have a token yet — generate one
+		token, genErr := generateVerificationToken()
+		if genErr != nil {
+			return fmt.Errorf("failed to generate verification token: %w", genErr)
+		}
+		vt = &models.VerificationToken{
+			UserID: userID,
+			Email:  user.Email,
+			Token:  token,
+		}
+		if createErr := s.verifyRepo.Create(ctx, vt); createErr != nil {
+			return fmt.Errorf("failed to store verification token: %w", createErr)
+		}
+	}
+
+	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", origin, vt.Token)
+
+	return s.emailClient.SendVerificationEmail(ctx, user.Email, user.Username, verifyURL)
+}
+
+func (s *authService) VerifyEmail(ctx context.Context, token string) error {
+	vt, err := s.verifyRepo.FindByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTokenNotFound
+		}
+		return fmt.Errorf("failed to find verification token: %w", err)
+	}
+
+	user, err := s.userRepo.FindByID(ctx, vt.UserID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	// Reject if user changed email since token was created
+	if user.Email != vt.Email {
+		return ErrTokenEmailMismatch
+	}
+
+	user.EmailVerified = true
+	return s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Update(ctx, user); err != nil {
+			return fmt.Errorf("failed to update email verified status: %w", err)
+		}
+		if err := verifyRepo.DeleteByUserID(ctx, vt.UserID); err != nil {
+			return fmt.Errorf("failed to delete verification token: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *authService) UpdateProfile(ctx context.Context, userID int64, req ProfileUpdateRequest) (*ProfileResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("failed to find user: %w", err)
+	}
+
+	emailChanged := req.Email != nil && *req.Email != user.Email
+	if emailChanged {
+		existing, err := s.userRepo.FindByEmail(ctx, *req.Email)
+		if err == nil && existing != nil {
+			return nil, ErrEmailTaken
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("failed to check email uniqueness: %w", err)
+		}
+
+		user.Email = *req.Email
+		user.EmailVerified = false
+	}
+
+	if req.DisplayName != nil {
+		user.DisplayName = req.DisplayName
+	}
+
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Update(ctx, user); err != nil {
+			return fmt.Errorf("failed to update profile: %w", err)
+		}
+
+		if emailChanged {
+			if err := verifyRepo.DeleteByUserID(ctx, userID); err != nil {
+				return fmt.Errorf("failed to delete old verification token: %w", err)
+			}
+			token, err := generateVerificationToken()
+			if err != nil {
+				return fmt.Errorf("failed to generate verification token: %w", err)
+			}
+			vt := &models.VerificationToken{
+				UserID: userID,
+				Email:  *req.Email,
+				Token:  token,
+			}
+			if err := verifyRepo.Create(ctx, vt); err != nil {
+				return fmt.Errorf("failed to store verification token: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return &ProfileResponse{
+		UserID:        user.ID,
+		Username:      user.Username,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		DisplayName:   user.DisplayName,
+	}, nil
+}
+
+func (s *authService) ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error {
+	if len([]byte(req.NewPassword)) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	if len([]byte(req.NewPassword)) > 72 {
+		return ErrPasswordTooLong
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return ErrPasswordMismatch
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user.PasswordHash = string(hash)
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	if err := s.invalidateAllSessions(ctx, userID); err != nil {
+		return fmt.Errorf("failed to invalidate sessions: %w", err)
+	}
+
+	return nil
+}
+
+// signToken creates a JWT with email fields populated. Uses golang-jwt directly
+// because portfolio-common's GenerateAccessToken/GenerateRefreshToken don't
+// support email/emailVerified claims.
+func (s *authService) signToken(userID int64, username, userEmail string, emailVerified bool, displayName string, scopes map[string]string, expiry time.Duration) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("user ID must be positive")
+	}
+	if username == "" {
+		return "", fmt.Errorf("username cannot be empty")
+	}
+
+	var scopesCopy map[string]string
+	if scopes != nil {
+		scopesCopy = make(map[string]string, len(scopes))
+		for k, v := range scopes {
+			scopesCopy[k] = v
+		}
+	}
+
+	now := time.Now()
+	claims := jwt.Claims{
+		UserID:        userID,
+		Username:      username,
+		Email:         userEmail,
+		EmailVerified: emailVerified,
+		DisplayName:   displayName,
+		Scopes:        scopesCopy,
+		RegisteredClaims: jwtlib.RegisteredClaims{
+			ExpiresAt: jwtlib.NewNumericDate(now.Add(expiry)),
+			IssuedAt:  jwtlib.NewNumericDate(now),
+		},
+	}
+
+	token := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) error {
+	pattern := fmt.Sprintf("refresh_token:%d:*", userID)
+	iter := s.redis.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		if err := s.redis.Del(ctx, iter.Val()).Err(); err != nil {
+			return fmt.Errorf("failed to delete session key: %w", err)
+		}
+		sessionID := iter.Val()[len(fmt.Sprintf("refresh_token:%d:", userID)):]
+		if err := s.redis.Del(ctx, fmt.Sprintf("remember_me:%d:%s", userID, sessionID)).Err(); err != nil {
+			return fmt.Errorf("failed to delete remember_me key: %w", err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("failed to scan sessions: %w", err)
+	}
+	return nil
+}
+
+func generateVerificationToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

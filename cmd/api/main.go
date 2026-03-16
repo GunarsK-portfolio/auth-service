@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	_ "github.com/GunarsK-portfolio/auth-service/docs"
 	"github.com/GunarsK-portfolio/auth-service/internal/config"
+	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/handlers"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
 	"github.com/GunarsK-portfolio/auth-service/internal/routes"
@@ -86,6 +88,7 @@ func main() {
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	verifyRepo := repository.NewVerificationTokenRepository(db)
 	actionLogRepo := commonrepo.NewActionLogRepository(db)
 
 	// Initialize services
@@ -95,13 +98,33 @@ func main() {
 		appLogger.Error("Failed to create JWT service", "error", err)
 		log.Fatal("Failed to create JWT service:", err)
 	}
-	authService := service.NewAuthService(userRepo, jwtService, redisClient, cfg.DeniedSelfAssignRoles)
+
+	// Initialize email client (optional -- service works without it but can't send emails)
+	var emailClient *email.Client
+	if cfg.MessagingAPIURL != "" && cfg.ServiceUserName != "" {
+		svcUser, svcErr := userRepo.FindByUsername(context.Background(), cfg.ServiceUserName)
+		if svcErr != nil {
+			appLogger.Error("Failed to find service user", "username", cfg.ServiceUserName, "error", svcErr)
+			log.Fatal("Failed to find service user:", svcErr)
+		}
+		emailClient = email.NewClient(cfg.MessagingAPIURL, jwtService, svcUser.ID, cfg.ServiceUserName)
+		appLogger.Info("Email client configured", "messaging_api_url", cfg.MessagingAPIURL, "service_user", cfg.ServiceUserName)
+	} else {
+		appLogger.Warn("Email client not configured (MESSAGING_API_URL or SERVICE_USER_NAME missing)")
+	}
+
+	//nolint:staticcheck // Embedded field name required for clarity
+	authService := service.NewAuthService(
+		db, userRepo, verifyRepo, jwtService, cfg.JWTConfig.Secret,
+		redisClient, emailClient, cfg.DeniedSelfAssignRoles,
+		cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow,
+	)
 
 	// Initialize cookie helper
 	cookieHelper := handlers.NewCookieHelper(cfg.CookieConfig)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService, actionLogRepo, cookieHelper, jwtService)
+	authHandler := handlers.NewAuthHandler(authService, actionLogRepo, cookieHelper, jwtService, cfg.AllowedOrigins, cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow.String())
 
 	// Setup router with custom middleware
 	router := gin.New()

@@ -41,6 +41,10 @@ services:
       - JWT_SECRET=your-secret-key-change-in-production
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=168h
+      - MESSAGING_API_URL=${MESSAGING_API_URL}
+      - SERVICE_USER_NAME=${SERVICE_USER_NAME}
+      - VERIFY_RATE_LIMIT_MAX=${VERIFY_RATE_LIMIT_MAX}
+      - VERIFY_RATE_LIMIT_WINDOW=${VERIFY_RATE_LIMIT_WINDOW}
     depends_on:
       postgres:
         condition: service_healthy

@@ -20,7 +20,7 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 	// Security middleware with CORS validation
 	securityMiddleware := common.NewSecurityMiddleware(
 		cfg.AllowedOrigins,
-		"GET,POST,PUT,DELETE,OPTIONS",
+		"GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		"Content-Type,Authorization",
 		true,
 	)
@@ -47,6 +47,10 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 		v1.POST("/refresh", authHandler.Refresh)
 		v1.POST("/validate", authHandler.Validate)
 		v1.GET("/token-status", authHandler.TokenStatus)
+		v1.POST("/send-verification", authHandler.SendVerification)
+		v1.POST("/verify-email", authHandler.VerifyEmail)
+		v1.PATCH("/profile", authHandler.UpdateProfile)
+		v1.POST("/change-password", authHandler.ChangePassword)
 	}
 
 	// Swagger documentation (only if SWAGGER_HOST is configured)

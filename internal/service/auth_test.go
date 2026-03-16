@@ -38,6 +38,45 @@ type mockUserRepository struct {
 	findRoleByCodeFunc func(ctx context.Context, code string) (*models.Role, error)
 }
 
+// =============================================================================
+// Mock VerificationTokenRepository
+// =============================================================================
+
+type mockVerifyRepo struct {
+	createFunc       func(ctx context.Context, token *models.VerificationToken) error
+	findByTokenFunc  func(ctx context.Context, token string) (*models.VerificationToken, error)
+	findByUserIDFunc func(ctx context.Context, userID int64) (*models.VerificationToken, error)
+	deleteByUserFunc func(ctx context.Context, userID int64) error
+}
+
+func (m *mockVerifyRepo) Create(ctx context.Context, token *models.VerificationToken) error {
+	if m.createFunc != nil {
+		return m.createFunc(ctx, token)
+	}
+	return nil
+}
+
+func (m *mockVerifyRepo) FindByToken(ctx context.Context, token string) (*models.VerificationToken, error) {
+	if m.findByTokenFunc != nil {
+		return m.findByTokenFunc(ctx, token)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockVerifyRepo) FindByUserID(ctx context.Context, userID int64) (*models.VerificationToken, error) {
+	if m.findByUserIDFunc != nil {
+		return m.findByUserIDFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockVerifyRepo) DeleteByUserID(ctx context.Context, userID int64) error {
+	if m.deleteByUserFunc != nil {
+		return m.deleteByUserFunc(ctx, userID)
+	}
+	return nil
+}
+
 func (m *mockUserRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	if m.findByUsernameFunc != nil {
 		return m.findByUsernameFunc(ctx, username)
@@ -107,7 +146,7 @@ func setupTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return client, mr
 }
 
-func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository) {
+func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository, *mockVerifyRepo) {
 	t.Helper()
 
 	redisClient, mr := setupTestRedis(t)
@@ -116,9 +155,27 @@ func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mo
 		t.Fatalf("Failed to create JWT service: %v", err)
 	}
 	mockRepo := &mockUserRepository{}
+	mockVerify := &mockVerifyRepo{}
 
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin", "rpg-admin"}).(*authService)
-	return service, mr, mockRepo
+	// Default FindByID returns a basic user so refresh tests work out of the box.
+	// Individual tests can override this.
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            id,
+			Username:      "testuser",
+			Email:         "test@example.com",
+			EmailVerified: false,
+		}, nil
+	}
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return nil, nil
+	}
+
+	svc := NewAuthService(
+		nil, mockRepo, mockVerify, jwtService, testSecret,
+		redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour,
+	).(*authService)
+	return svc, mr, mockRepo, mockVerify
 }
 
 func hashPassword(t *testing.T, password string) string {
@@ -140,10 +197,11 @@ func TestNewAuthService(t *testing.T) {
 
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
+	mockVerify := &mockVerifyRepo{}
 
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin"})
+	svc := NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
 
-	if service == nil {
+	if svc == nil {
 		t.Error("NewAuthService() should return non-nil service")
 	}
 }
@@ -154,8 +212,9 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
+	mockVerify := &mockVerifyRepo{}
 
-	var _ = NewAuthService(mockRepo, jwtService, redisClient, []string{"admin"})
+	var _ = NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
 }
 
 // =============================================================================
@@ -163,7 +222,7 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 // =============================================================================
 
 func TestLogin_Success(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -207,7 +266,7 @@ func TestLogin_Success(t *testing.T) {
 }
 
 func TestLogin_UserNotFound(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -226,7 +285,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 }
 
 func TestLogin_WrongPassword(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "correctpassword")
@@ -251,7 +310,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 }
 
 func TestLogin_EmptyCredentials(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	tests := []struct {
@@ -286,7 +345,7 @@ func TestLogin_EmptyCredentials(t *testing.T) {
 }
 
 func TestLogin_RedisFailure(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 
 	passwordHash := hashPassword(t, "testpassword")
 
@@ -309,7 +368,7 @@ func TestLogin_RedisFailure(t *testing.T) {
 }
 
 func TestLogin_ContextCancellation(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -338,7 +397,7 @@ func TestLogin_ContextCancellation(t *testing.T) {
 // =============================================================================
 
 func TestLogin_RememberMe_StoresInRedis(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -372,7 +431,7 @@ func TestLogin_RememberMe_StoresInRedis(t *testing.T) {
 }
 
 func TestLogin_NoRememberMe_StoresFalseInRedis(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -405,7 +464,7 @@ func TestLogin_NoRememberMe_StoresFalseInRedis(t *testing.T) {
 }
 
 func TestRefreshToken_PreservesRememberMe(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -451,7 +510,7 @@ func TestRefreshToken_PreservesRememberMe(t *testing.T) {
 }
 
 func TestRefreshToken_RememberMeFalsePreserved(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -484,7 +543,7 @@ func TestRefreshToken_RememberMeFalsePreserved(t *testing.T) {
 }
 
 func TestRefreshToken_RememberMeDefaultsFalseOnMiss(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -519,7 +578,7 @@ func TestRefreshToken_RememberMeDefaultsFalseOnMiss(t *testing.T) {
 }
 
 func TestLogout_CleansUpRememberMe(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -568,7 +627,7 @@ func TestLogout_CleansUpRememberMe(t *testing.T) {
 // =============================================================================
 
 func TestLogin_WithScopes(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -615,7 +674,7 @@ func TestLogin_WithScopes(t *testing.T) {
 }
 
 func TestLogin_WithNilScopes(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -648,7 +707,7 @@ func TestLogin_WithNilScopes(t *testing.T) {
 }
 
 func TestLogin_GetUserScopesError(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -673,7 +732,7 @@ func TestLogin_GetUserScopesError(t *testing.T) {
 }
 
 func TestRefreshToken_PreservesScopes(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -728,18 +787,13 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 	}
 }
 
-// TestRefreshToken_ScopesNotRefetched demonstrates that role changes don't take
-// effect until user re-authenticates. This is an intentional trade-off to avoid
-// a database lookup on every refresh.
-func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+// TestRefreshToken_ScopesRefreshedFromDB verifies that role/scope changes
+// take effect on the next token refresh without requiring re-login.
+func TestRefreshToken_ScopesRefreshedFromDB(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
-	initialScopes := map[string]string{
-		"profile":  "read",
-		"projects": "read",
-	}
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
 		return &models.User{
@@ -750,17 +804,18 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 	}
 
 	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
-		return initialScopes, nil
+		return map[string]string{
+			"profile":  "read",
+			"projects": "read",
+		}, nil
 	}
 
-	// Login with initial scopes
 	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
 
-	// Simulate role change: user now has elevated permissions
-	// (In real scenario, admin updates user's role in database)
+	// Simulate role change in DB
 	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
 		return map[string]string{
 			"profile":  "delete",
@@ -770,7 +825,6 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 
 	time.Sleep(jwtTimestampBuffer)
 
-	// Refresh token - should preserve ORIGINAL scopes, not new ones
 	refreshResult, err := service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
 	if err != nil {
 		t.Fatalf("RefreshToken() error = %v", err)
@@ -781,13 +835,13 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
 
-	// Scopes should still be the original "read" values, NOT "delete"
-	if claims.Scopes["profile"] != "read" {
-		t.Errorf("Scopes[profile] = %s, want read (original value, not refreshed from DB)", claims.Scopes["profile"])
+	// Scopes should reflect the updated DB values
+	if claims.Scopes["profile"] != "delete" {
+		t.Errorf("Scopes[profile] = %s, want delete (refreshed from DB)", claims.Scopes["profile"])
 	}
 
-	if claims.Scopes["projects"] != "read" {
-		t.Errorf("Scopes[projects] = %s, want read (original value, not refreshed from DB)", claims.Scopes["projects"])
+	if claims.Scopes["projects"] != "delete" {
+		t.Errorf("Scopes[projects] = %s, want delete (refreshed from DB)", claims.Scopes["projects"])
 	}
 }
 
@@ -796,7 +850,7 @@ func TestRefreshToken_ScopesNotRefetched(t *testing.T) {
 // =============================================================================
 
 func TestLogout_Success(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -835,7 +889,7 @@ func TestLogout_Success(t *testing.T) {
 }
 
 func TestLogout_InvalidToken(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	err := service.Logout(context.Background(), "invalid-token", "any-session")
@@ -853,7 +907,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin", "rpg-admin"}).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -873,7 +927,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 }
 
 func TestLogout_SessionNotFound(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	// Generate valid token but don't create a session in Redis
@@ -890,7 +944,7 @@ func TestLogout_SessionNotFound(t *testing.T) {
 }
 
 func TestLogout_RedisFailure(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 
 	// Generate valid token
 	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -913,7 +967,7 @@ func TestLogout_RedisFailure(t *testing.T) {
 // =============================================================================
 
 func TestRefreshToken_Success(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -964,7 +1018,7 @@ func TestRefreshToken_Success(t *testing.T) {
 }
 
 func TestRefreshToken_InvalidToken(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	_, err := service.RefreshToken(context.Background(), "invalid-token", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -975,7 +1029,7 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 }
 
 func TestRefreshToken_MalformedSessionID(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	_, err := service.RefreshToken(context.Background(), "any-token", "not-a-uuid")
@@ -995,7 +1049,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, shortExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin", "rpg-admin"}).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate refresh token
 	token, err := jwtService.GenerateRefreshToken(1, "testuser", nil)
@@ -1019,7 +1073,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 }
 
 func TestRefreshToken_NotInRedis(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	// Generate valid token but don't store in Redis
@@ -1036,7 +1090,7 @@ func TestRefreshToken_NotInRedis(t *testing.T) {
 }
 
 func TestRefreshToken_TokenMismatch(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	// Generate two different tokens
@@ -1062,7 +1116,7 @@ func TestRefreshToken_TokenMismatch(t *testing.T) {
 }
 
 func TestRefreshToken_RedisFailure(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 
 	// Generate valid token and store in Redis
 	token, err := service.jwtService.GenerateRefreshToken(1, "testuser", nil)
@@ -1090,7 +1144,7 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 // =============================================================================
 
 func TestAuthValidateToken_ValidToken(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	token, err := service.jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1116,7 +1170,7 @@ func TestAuthValidateToken_ValidToken(t *testing.T) {
 }
 
 func TestAuthValidateToken_InvalidToken(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	_, err := service.ValidateToken("invalid-token")
@@ -1137,7 +1191,7 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin", "rpg-admin"}).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1167,7 +1221,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, jwtService, redisClient, []string{"admin", "rpg-admin"}).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1196,7 +1250,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 // =============================================================================
 
 func TestConcurrentLogins(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -1227,7 +1281,7 @@ func TestConcurrentLogins(t *testing.T) {
 }
 
 func TestConcurrentRefreshToken(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
@@ -1279,7 +1333,7 @@ func TestConcurrentRefreshToken(t *testing.T) {
 // =============================================================================
 
 func TestRegister_Success(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1331,7 +1385,7 @@ func TestRegister_Success(t *testing.T) {
 }
 
 func TestRegister_Success_WithRoleCode(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1378,7 +1432,7 @@ func TestRegister_Success_WithRoleCode(t *testing.T) {
 }
 
 func TestRegister_UsernameTaken(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1397,7 +1451,7 @@ func TestRegister_UsernameTaken(t *testing.T) {
 }
 
 func TestRegister_EmailTaken(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1420,7 +1474,7 @@ func TestRegister_EmailTaken(t *testing.T) {
 }
 
 func TestRegister_RoleNotAllowed(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1444,7 +1498,7 @@ func TestRegister_RoleNotAllowed(t *testing.T) {
 }
 
 func TestRegister_RpgAdminNotAllowed(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	_, err := service.Register(context.Background(), RegisterRequest{
@@ -1460,7 +1514,7 @@ func TestRegister_RpgAdminNotAllowed(t *testing.T) {
 }
 
 func TestRegister_InvalidRoleCode(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1489,7 +1543,7 @@ func TestRegister_InvalidRoleCode(t *testing.T) {
 }
 
 func TestRegister_PasswordTooLongBytes(t *testing.T) {
-	service, mr, _ := setupTestAuthService(t)
+	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	// 73 ASCII bytes exceeds bcrypt's 72-byte limit
@@ -1505,7 +1559,7 @@ func TestRegister_PasswordTooLongBytes(t *testing.T) {
 }
 
 func TestRegister_PasswordExactly72Bytes(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1537,7 +1591,7 @@ func TestRegister_PasswordExactly72Bytes(t *testing.T) {
 }
 
 func TestRegister_CreateFails(t *testing.T) {
-	service, mr, mockRepo := setupTestAuthService(t)
+	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1561,4 +1615,428 @@ func TestRegister_CreateFails(t *testing.T) {
 	if err == nil {
 		t.Error("Register() should fail when Create fails")
 	}
+}
+
+func TestRegister_CreatesVerificationToken(t *testing.T) {
+	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
+		user.ID = 5
+		return nil
+	}
+
+	var createdToken *models.VerificationToken
+	mockVerify.createFunc = func(ctx context.Context, token *models.VerificationToken) error {
+		createdToken = token
+		return nil
+	}
+
+	_, err := service.Register(context.Background(), RegisterRequest{
+		Username: "newuser",
+		Email:    "new@example.com",
+		Password: "password123",
+	})
+
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if createdToken == nil {
+		t.Fatal("Register() should create a verification token")
+	}
+
+	if createdToken.UserID != 5 {
+		t.Errorf("VerificationToken.UserID = %d, want 5", createdToken.UserID)
+	}
+
+	if createdToken.Email != "new@example.com" {
+		t.Errorf("VerificationToken.Email = %s, want new@example.com", createdToken.Email)
+	}
+
+	if len(createdToken.Token) != 64 {
+		t.Errorf("VerificationToken.Token length = %d, want 64 hex chars", len(createdToken.Token))
+	}
+}
+
+// =============================================================================
+// VerifyEmail Tests
+// =============================================================================
+
+func TestVerifyEmail_Success(t *testing.T) {
+	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+		return &models.VerificationToken{
+			ID:     1,
+			UserID: 1,
+			Email:  "test@example.com",
+			Token:  "abc123",
+		}, nil
+	}
+
+	var updatedUser *models.User
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Username:      "testuser",
+			Email:         "test@example.com",
+			EmailVerified: false,
+		}, nil
+	}
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		updatedUser = user
+		return nil
+	}
+	mockVerify.deleteByUserFunc = func(ctx context.Context, userID int64) error {
+		return nil
+	}
+
+	err := service.VerifyEmail(context.Background(), "abc123")
+
+	if err != nil {
+		t.Fatalf("VerifyEmail() error = %v", err)
+	}
+
+	if updatedUser == nil || !updatedUser.EmailVerified {
+		t.Error("VerifyEmail() should set EmailVerified to true")
+	}
+}
+
+func TestVerifyEmail_TokenNotFound(t *testing.T) {
+	service, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	err := service.VerifyEmail(context.Background(), "nonexistent")
+
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("VerifyEmail() error = %v, want %v", err, ErrTokenNotFound)
+	}
+}
+
+func TestVerifyEmail_EmailMismatch(t *testing.T) {
+	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+		return &models.VerificationToken{
+			UserID: 1,
+			Email:  "old@example.com",
+			Token:  "abc123",
+		}, nil
+	}
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:    1,
+			Email: "new@example.com",
+		}, nil
+	}
+
+	err := service.VerifyEmail(context.Background(), "abc123")
+
+	if !errors.Is(err, ErrTokenEmailMismatch) {
+		t.Errorf("VerifyEmail() error = %v, want %v", err, ErrTokenEmailMismatch)
+	}
+}
+
+// =============================================================================
+// UpdateProfile Tests
+// =============================================================================
+
+func TestUpdateProfile_ChangeDisplayName(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:       1,
+			Username: "testuser",
+			Email:    "test@example.com",
+		}, nil
+	}
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		return nil
+	}
+
+	name := "John Doe"
+	result, err := service.UpdateProfile(context.Background(), 1, ProfileUpdateRequest{
+		DisplayName: &name,
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+
+	if result.DisplayName == nil || *result.DisplayName != "John Doe" {
+		t.Error("UpdateProfile() should update display name")
+	}
+}
+
+func TestUpdateProfile_ChangeEmail_ResetsVerification(t *testing.T) {
+	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Username:      "testuser",
+			Email:         "old@example.com",
+			EmailVerified: true,
+		}, nil
+	}
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var updatedUser *models.User
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		updatedUser = user
+		return nil
+	}
+
+	var createdToken *models.VerificationToken
+	mockVerify.createFunc = func(ctx context.Context, token *models.VerificationToken) error {
+		createdToken = token
+		return nil
+	}
+
+	newEmail := "new@example.com"
+	result, err := service.UpdateProfile(context.Background(), 1, ProfileUpdateRequest{
+		Email: &newEmail,
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+
+	if result.Email != "new@example.com" {
+		t.Errorf("UpdateProfile() Email = %s, want new@example.com", result.Email)
+	}
+
+	if updatedUser.EmailVerified {
+		t.Error("UpdateProfile() should reset EmailVerified when email changes")
+	}
+
+	if createdToken == nil {
+		t.Error("UpdateProfile() should create new verification token when email changes")
+	}
+}
+
+func TestUpdateProfile_EmailTaken(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:    1,
+			Email: "old@example.com",
+		}, nil
+	}
+	mockRepo.findByEmailFunc = func(ctx context.Context, email string) (*models.User, error) {
+		return &models.User{ID: 2, Email: "taken@example.com"}, nil
+	}
+
+	takenEmail := "taken@example.com"
+	_, err := service.UpdateProfile(context.Background(), 1, ProfileUpdateRequest{
+		Email: &takenEmail,
+	})
+
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Errorf("UpdateProfile() error = %v, want %v", err, ErrEmailTaken)
+	}
+}
+
+// =============================================================================
+// ChangePassword Tests
+// =============================================================================
+
+func TestChangePassword_Success(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "oldpassword")
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	var updatedUser *models.User
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		updatedUser = user
+		return nil
+	}
+
+	err := service.ChangePassword(context.Background(), 1, ChangePasswordRequest{
+		CurrentPassword: "oldpassword",
+		NewPassword:     "newpassword123",
+	})
+
+	if err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+
+	if updatedUser == nil {
+		t.Fatal("ChangePassword() should update user")
+	}
+
+	// Verify new password was hashed
+	if err := bcrypt.CompareHashAndPassword([]byte(updatedUser.PasswordHash), []byte("newpassword123")); err != nil {
+		t.Error("ChangePassword() should store valid bcrypt hash of new password")
+	}
+}
+
+func TestChangePassword_WrongCurrentPassword(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "correctpassword")
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			PasswordHash: passwordHash,
+		}, nil
+	}
+
+	err := service.ChangePassword(context.Background(), 1, ChangePasswordRequest{
+		CurrentPassword: "wrongpassword",
+		NewPassword:     "newpassword123",
+	})
+
+	if !errors.Is(err, ErrPasswordMismatch) {
+		t.Errorf("ChangePassword() error = %v, want %v", err, ErrPasswordMismatch)
+	}
+}
+
+func TestChangePassword_TooShort(t *testing.T) {
+	service, mr, _, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	err := service.ChangePassword(context.Background(), 1, ChangePasswordRequest{
+		CurrentPassword: "old",
+		NewPassword:     "short",
+	})
+
+	if err == nil {
+		t.Error("ChangePassword() should reject passwords shorter than 8 characters")
+	}
+}
+
+func TestChangePassword_TooLong(t *testing.T) {
+	service, mr, _, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	err := service.ChangePassword(context.Background(), 1, ChangePasswordRequest{
+		CurrentPassword: "old",
+		NewPassword:     strings.Repeat("a", 73),
+	})
+
+	if !errors.Is(err, ErrPasswordTooLong) {
+		t.Errorf("ChangePassword() error = %v, want %v", err, ErrPasswordTooLong)
+	}
+}
+
+// =============================================================================
+// Login Email Claims Tests
+// =============================================================================
+
+func TestLogin_TokenContainsEmailClaims(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Username:      "testuser",
+			Email:         "test@example.com",
+			EmailVerified: true,
+			PasswordHash:  passwordHash,
+		}, nil
+	}
+
+	result, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	claims, err := service.jwtService.ValidateToken(result.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	if claims.Email != "test@example.com" {
+		t.Errorf("Access token Email = %s, want test@example.com", claims.Email)
+	}
+
+	if !claims.EmailVerified {
+		t.Error("Access token EmailVerified should be true")
+	}
+}
+
+// =============================================================================
+// SendVerification Tests
+// =============================================================================
+
+func TestSendVerification_AlreadyVerified(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Email:         "test@example.com",
+			EmailVerified: true,
+		}, nil
+	}
+
+	err := service.SendVerification(context.Background(), 1, "test@example.com", "https://example.com")
+
+	if !errors.Is(err, ErrAlreadyVerified) {
+		t.Errorf("SendVerification() error = %v, want %v", err, ErrAlreadyVerified)
+	}
+}
+
+func TestSendVerification_EmailNotConfigured(t *testing.T) {
+	// Service is created without email client (nil) by default in setupTestAuthService
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Email:         "test@example.com",
+			EmailVerified: false,
+		}, nil
+	}
+
+	err := service.SendVerification(context.Background(), 1, "test@example.com", "https://example.com")
+
+	if !errors.Is(err, ErrEmailNotConfigured) {
+		t.Errorf("SendVerification() error = %v, want %v", err, ErrEmailNotConfigured)
+	}
+}
+
+func TestSendVerification_RateLimit(t *testing.T) {
+	// Rate limiting check happens after the nil email client check,
+	// so this requires a mock HTTP server for the email client.
+	// Covered by integration tests.
+	t.Skip("Rate limiting requires email client; covered by integration tests")
 }
