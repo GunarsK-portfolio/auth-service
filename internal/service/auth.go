@@ -448,19 +448,8 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 		return ErrEmailNotConfigured
 	}
 
-	rateLimitKey := fmt.Sprintf("verify_ratelimit:%d", userID)
-	count, err := s.redis.Incr(ctx, rateLimitKey).Result()
-	if err != nil {
-		return fmt.Errorf("failed to check rate limit: %w", err)
-	}
-	if count == 1 {
-		if err := s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow).Err(); err != nil {
-			s.redis.Del(ctx, rateLimitKey)
-			return fmt.Errorf("failed to set rate limit expiry: %w", err)
-		}
-	}
-	if count > s.verifyRateLimitMax {
-		return ErrRateLimited
+	if err := s.checkRateLimit(ctx, fmt.Sprintf("verify_ratelimit:%d", userID)); err != nil {
+		return err
 	}
 
 	// Always generate a fresh token since we can't recover raw from hash.
@@ -648,20 +637,8 @@ func (s *authService) ForgotPassword(ctx context.Context, emailAddr, origin stri
 		return ErrEmailNotConfigured
 	}
 
-	// Rate limit by email address
-	rateLimitKey := fmt.Sprintf("reset_ratelimit:%s", emailAddr)
-	count, err := s.redis.Incr(ctx, rateLimitKey).Result()
-	if err != nil {
-		return fmt.Errorf("failed to check rate limit: %w", err)
-	}
-	if count == 1 {
-		if err := s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow).Err(); err != nil {
-			s.redis.Del(ctx, rateLimitKey)
-			return fmt.Errorf("failed to set rate limit expiry: %w", err)
-		}
-	}
-	if count > s.verifyRateLimitMax {
-		return ErrRateLimited
+	if err := s.checkRateLimit(ctx, fmt.Sprintf("reset_ratelimit:%s", emailAddr)); err != nil {
+		return err
 	}
 
 	user, err := s.userRepo.FindByEmail(ctx, emailAddr)
@@ -792,6 +769,23 @@ func (s *authService) signToken(userID int64, username, userEmail string, emailV
 
 	token := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *authService) checkRateLimit(ctx context.Context, key string) error {
+	count, err := s.redis.Incr(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check rate limit: %w", err)
+	}
+	if count == 1 {
+		if err := s.redis.Expire(ctx, key, s.verifyRateLimitWindow).Err(); err != nil {
+			s.redis.Del(ctx, key)
+			return fmt.Errorf("failed to set rate limit expiry: %w", err)
+		}
+	}
+	if count > s.verifyRateLimitMax {
+		return ErrRateLimited
+	}
+	return nil
 }
 
 func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) error {
