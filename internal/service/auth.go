@@ -459,6 +459,9 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 	}
 
 	vt, err := s.verifyRepo.FindByUserID(ctx, userID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to find verification token: %w", err)
+	}
 	if err != nil {
 		// Old accounts may not have a token yet — generate one
 		token, genErr := generateVerificationToken()
