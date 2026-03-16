@@ -484,7 +484,7 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 
 func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 	tokenHash := models.HashToken(token)
-	vt, err := s.verifyRepo.FindByToken(ctx, tokenHash)
+	vt, err := s.verifyRepo.FindByTokenAndType(ctx, tokenHash, models.TokenTypeEmailVerification)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrTokenNotFound
@@ -523,6 +523,9 @@ func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 			return fmt.Errorf("failed to update email verified status: %w", err)
 		}
 		if err := verifyRepo.MarkUsed(ctx, vt.ID); err != nil {
+			if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+				return ErrTokenNotFound
+			}
 			return fmt.Errorf("failed to mark verification token as used: %w", err)
 		}
 		return nil
@@ -713,7 +716,10 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 
 	user, err := s.userRepo.FindByID(ctx, vt.UserID)
 	if err != nil {
-		return ErrUserNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -735,6 +741,9 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 			return fmt.Errorf("failed to update password: %w", err)
 		}
 		if err := verifyRepo.MarkUsed(ctx, vt.ID); err != nil {
+			if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+				return ErrTokenNotFound
+			}
 			return fmt.Errorf("failed to mark reset token as used: %w", err)
 		}
 		return nil

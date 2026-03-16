@@ -3,12 +3,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"gorm.io/gorm"
 )
+
+// ErrTokenAlreadyUsed is returned when MarkUsed targets a token that was already consumed.
+var ErrTokenAlreadyUsed = errors.New("token already consumed")
 
 // VerificationTokenRepository defines operations for verification tokens.
 type VerificationTokenRepository interface {
@@ -91,7 +95,7 @@ func (r *verificationTokenRepository) MarkUsed(ctx context.Context, id int64) er
 		return fmt.Errorf("failed to mark token %d as used: %w", id, result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("token %d already consumed", id)
+		return ErrTokenAlreadyUsed
 	}
 	return nil
 }

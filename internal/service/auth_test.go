@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/alicebob/miniredis/v2"
@@ -1709,9 +1712,12 @@ func TestVerifyEmail_Success(t *testing.T) {
 	rawToken := "abc123"
 	hashedToken := models.HashToken(rawToken)
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
 		if token != hashedToken {
-			t.Errorf("FindByToken called with unhashed token %q, want hash", token)
+			t.Errorf("FindByTokenAndType called with unhashed token %q, want hash", token)
+		}
+		if tokenType != models.TokenTypeEmailVerification {
+			t.Errorf("FindByTokenAndType called with type %q, want %q", tokenType, models.TokenTypeEmailVerification)
 		}
 		return &models.VerificationToken{
 			ID:     1,
@@ -1758,7 +1764,7 @@ func TestVerifyEmail_TokenNotFound(t *testing.T) {
 	service, mr, _, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 
@@ -1776,7 +1782,7 @@ func TestVerifyEmail_EmailMismatch(t *testing.T) {
 	rawToken := "abc123"
 	hashedToken := models.HashToken(rawToken)
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
 		return &models.VerificationToken{
 			UserID: 1,
 			Email:  "old@example.com",
@@ -2092,22 +2098,82 @@ func TestSendVerification_RateLimit(t *testing.T) {
 // ForgotPassword Tests
 // =============================================================================
 
+func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository, *mockVerifyRepo, *httptest.Server) {
+	t.Helper()
+
+	emailServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	redisClient, mr := setupTestRedis(t)
+	jwtService, err := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("Failed to create JWT service: %v", err)
+	}
+	mockRepo := &mockUserRepository{}
+	mockVerify := &mockVerifyRepo{}
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            id,
+			Username:      "testuser",
+			Email:         "test@example.com",
+			EmailVerified: false,
+		}, nil
+	}
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return nil, nil
+	}
+
+	emailClient := email.NewClient(emailServer.URL, jwtService, 1, "svc-test")
+
+	svc := NewAuthService(
+		nil, mockRepo, mockVerify, jwtService, testSecret,
+		redisClient, emailClient, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
+	).(*authService)
+	return svc, mr, mockRepo, mockVerify, emailServer
+}
+
 func TestForgotPassword_UserNotFound(t *testing.T) {
-	// ForgotPassword checks emailClient != nil before reaching FindByEmail.
-	// Testing enumeration safety requires email client setup.
-	t.Skip("Requires email client; covered by integration tests")
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	err := svc.ForgotPassword(context.Background(), "nonexistent@example.com", "https://example.com")
+
+	if err != nil {
+		t.Errorf("ForgotPassword() should return nil for unknown email, got %v", err)
+	}
 }
 
 func TestForgotPassword_EmailNotVerified(t *testing.T) {
-	// ForgotPassword checks emailClient != nil before reaching FindByEmail.
-	t.Skip("Requires email client; covered by integration tests")
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Email:         emailAddr,
+			EmailVerified: false,
+		}, nil
+	}
+
+	err := svc.ForgotPassword(context.Background(), "unverified@example.com", "https://example.com")
+
+	if err != nil {
+		t.Errorf("ForgotPassword() should return nil for unverified email, got %v", err)
+	}
 }
 
 func TestForgotPassword_EmailNotConfigured(t *testing.T) {
 	svc, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	// Default setup has nil email client
 	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
 
 	if !errors.Is(err, ErrEmailNotConfigured) {
@@ -2116,15 +2182,39 @@ func TestForgotPassword_EmailNotConfigured(t *testing.T) {
 }
 
 func TestForgotPassword_RateLimit(t *testing.T) {
-	// Rate limit check happens after email client nil check,
-	// so this requires email client setup.
-	t.Skip("Requires email client; covered by integration tests")
+	svc, mr, _, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	// Exhaust rate limit (max 3)
+	for i := 0; i < 3; i++ {
+		_ = svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("ForgotPassword() error = %v, want %v", err, ErrRateLimited)
+	}
 }
 
 func TestForgotPassword_DBError_Propagates(t *testing.T) {
-	// DB error propagation requires email client setup (nil client check
-	// happens before FindByEmail). Covered by integration tests.
-	t.Skip("Requires email client; covered by integration tests")
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return nil, errors.New("database connection refused")
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if err == nil {
+		t.Error("ForgotPassword() should propagate DB errors")
+	}
+	if errors.Is(err, ErrEmailNotConfigured) {
+		t.Error("ForgotPassword() should not return ErrEmailNotConfigured for DB errors")
+	}
 }
 
 // =============================================================================
