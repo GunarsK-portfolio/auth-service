@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -16,10 +17,12 @@ import (
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
-	authService   service.AuthService
-	actionLogRepo repository.ActionLogRepository
-	cookieHelper  *CookieHelper
-	jwtService    jwt.Service
+	authService        service.AuthService
+	actionLogRepo      repository.ActionLogRepository
+	cookieHelper       *CookieHelper
+	jwtService         jwt.Service
+	allowedOrigins     map[string]bool
+	verifyRateLimitMsg string
 }
 
 // NewAuthHandler creates a new AuthHandler instance.
@@ -28,12 +31,21 @@ func NewAuthHandler(
 	actionLogRepo repository.ActionLogRepository,
 	cookieHelper *CookieHelper,
 	jwtService jwt.Service,
+	allowedOrigins []string,
+	verifyRateLimitMax int64,
+	verifyRateLimitWindow string,
 ) *AuthHandler {
+	origins := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		origins[strings.TrimRight(o, "/")] = true
+	}
 	return &AuthHandler{
-		authService:   authService,
-		actionLogRepo: actionLogRepo,
-		cookieHelper:  cookieHelper,
-		jwtService:    jwtService,
+		authService:        authService,
+		actionLogRepo:      actionLogRepo,
+		cookieHelper:       cookieHelper,
+		jwtService:         jwtService,
+		allowedOrigins:     origins,
+		verifyRateLimitMsg: fmt.Sprintf("maximum %d verification emails per %s, please try again later", verifyRateLimitMax, verifyRateLimitWindow),
 	}
 }
 
@@ -56,11 +68,14 @@ type ValidateRequest struct {
 
 // LoginResponse is the response body for login (tokens are in httpOnly cookies).
 type LoginResponse struct {
-	Success   bool              `json:"success"`
-	ExpiresIn int64             `json:"expires_in"`
-	UserID    int64             `json:"user_id,omitempty"`
-	Username  string            `json:"username,omitempty"`
-	Scopes    map[string]string `json:"scopes,omitempty"`
+	Success       bool              `json:"success"`
+	ExpiresIn     int64             `json:"expires_in"`
+	UserID        int64             `json:"user_id,omitempty"`
+	Username      string            `json:"username,omitempty"`
+	Email         string            `json:"email,omitempty"`
+	EmailVerified bool              `json:"email_verified"`
+	DisplayName   string            `json:"display_name,omitempty"`
+	Scopes        map[string]string `json:"scopes,omitempty"`
 }
 
 // RegisterRequest represents the registration request payload.
@@ -217,11 +232,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, LoginResponse{
-		Success:   true,
-		ExpiresIn: response.ExpiresIn,
-		UserID:    response.UserID,
-		Username:  response.Username,
-		Scopes:    response.Scopes,
+		Success:       true,
+		ExpiresIn:     response.ExpiresIn,
+		UserID:        response.UserID,
+		Username:      response.Username,
+		Email:         response.Email,
+		EmailVerified: response.EmailVerified,
+		DisplayName:   response.DisplayName,
+		Scopes:        response.Scopes,
 	})
 }
 
@@ -379,10 +397,13 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 
 // TokenStatusResponse represents the token status response.
 type TokenStatusResponse struct {
-	Valid      bool              `json:"valid"`
-	TTLSeconds int64             `json:"ttl_seconds"`
-	Username   string            `json:"username,omitempty"`
-	Scopes     map[string]string `json:"scopes,omitempty"`
+	Valid         bool              `json:"valid"`
+	TTLSeconds    int64             `json:"ttl_seconds"`
+	Username      string            `json:"username,omitempty"`
+	Email         string            `json:"email,omitempty"`
+	EmailVerified bool              `json:"email_verified"`
+	DisplayName   string            `json:"display_name,omitempty"`
+	Scopes        map[string]string `json:"scopes,omitempty"`
 }
 
 // TokenStatus godoc
@@ -412,11 +433,226 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, TokenStatusResponse{
-		Valid:      true,
-		TTLSeconds: ttl,
-		Username:   claims.Username,
-		Scopes:     claims.Scopes,
+		Valid:         true,
+		TTLSeconds:    ttl,
+		Username:      claims.Username,
+		Email:         claims.Email,
+		EmailVerified: claims.EmailVerified,
+		DisplayName:   claims.DisplayName,
+		Scopes:        claims.Scopes,
 	})
+}
+
+// VerifyEmailRequest represents the email verification request payload.
+type VerifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// ProfileUpdateRequest represents the profile update request payload.
+type ProfileUpdateRequest struct {
+	Email       *string `json:"email" binding:"omitempty,email,max=100"`
+	DisplayName *string `json:"display_name" binding:"omitempty,max=100"`
+}
+
+// ChangePasswordRequest represents the change password request payload.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=8,max=72"`
+}
+
+// SendVerification godoc
+// @Summary Send verification email
+// @Description Send email verification link to the authenticated user's email
+// @Tags auth
+// @Security BearerAuth
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 429 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/send-verification [post]
+func (h *AuthHandler) SendVerification(c *gin.Context) {
+	claims, ok := h.authenticateRequest(c)
+	if !ok {
+		return
+	}
+
+	origin := strings.TrimRight(c.GetHeader("Origin"), "/")
+	if origin == "" || !h.allowedOrigins[origin] {
+		commonHandlers.RespondError(c, http.StatusBadRequest, "missing or disallowed origin")
+		return
+	}
+
+	err := h.authService.SendVerification(c.Request.Context(), claims.UserID, claims.Email, origin)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAlreadyVerified):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "email already verified")
+		case errors.Is(err, service.ErrRateLimited):
+			commonHandlers.RespondError(c, http.StatusTooManyRequests, h.verifyRateLimitMsg)
+		case errors.Is(err, service.ErrTokenNotFound):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "no verification token found")
+		case errors.Is(err, service.ErrEmailNotConfigured):
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "email service not configured")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to send verification email")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "verification email sent"})
+}
+
+// VerifyEmail godoc
+// @Summary Verify email address
+// @Description Verify email using token from verification email
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body VerifyEmailRequest true "Verification token"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /auth/verify-email [post]
+func (h *AuthHandler) VerifyEmail(c *gin.Context) {
+	var req VerifyEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := h.authService.VerifyEmail(c.Request.Context(), req.Token)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrTokenNotFound):
+			commonHandlers.RespondError(c, http.StatusNotFound, "invalid or expired verification token")
+		case errors.Is(err, service.ErrTokenEmailMismatch):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "email has changed since verification was requested")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "email verification failed")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email verified successfully"})
+}
+
+// UpdateProfile godoc
+// @Summary Update user profile
+// @Description Update email and/or display name
+// @Tags auth
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param request body ProfileUpdateRequest true "Profile update data"
+// @Success 200 {object} service.ProfileResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/profile [patch]
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	claims, ok := h.authenticateRequest(c)
+	if !ok {
+		return
+	}
+
+	var req ProfileUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.Email == nil && req.DisplayName == nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	result, err := h.authService.UpdateProfile(c.Request.Context(), claims.UserID, service.ProfileUpdateRequest{
+		Email:       req.Email,
+		DisplayName: req.DisplayName,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmailTaken):
+			commonHandlers.RespondError(c, http.StatusConflict, "email already in use")
+		case errors.Is(err, service.ErrUserNotFound):
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "user not found")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "profile update failed")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ChangePassword godoc
+// @Summary Change password
+// @Description Change the authenticated user's password
+// @Tags auth
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param request body ChangePasswordRequest true "Password change data"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/change-password [post]
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	claims, ok := h.authenticateRequest(c)
+	if !ok {
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := h.authService.ChangePassword(c.Request.Context(), claims.UserID, service.ChangePasswordRequest{
+		CurrentPassword: req.CurrentPassword,
+		NewPassword:     req.NewPassword,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrPasswordMismatch):
+			commonHandlers.RespondError(c, http.StatusUnauthorized, "current password is incorrect")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "password exceeds maximum length")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "password change failed")
+		}
+		return
+	}
+
+	// Clear cookies since all sessions are invalidated
+	h.cookieHelper.ClearAuthCookies(c)
+
+	c.JSON(http.StatusOK, gin.H{"message": "password changed successfully"})
+}
+
+// authenticateRequest extracts and validates the JWT from cookies or Authorization header.
+// Returns claims on success, or sends an error response and returns false.
+func (h *AuthHandler) authenticateRequest(c *gin.Context) (*jwt.Claims, bool) {
+	token := h.cookieHelper.GetAccessToken(c)
+	if token == "" {
+		token = extractToken(c)
+	}
+	if token == "" {
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "unauthorized")
+		return nil, false
+	}
+
+	_, claims, err := h.authService.ValidateTokenWithClaims(token)
+	if err != nil {
+		commonHandlers.RespondError(c, http.StatusUnauthorized, "invalid or expired token")
+		return nil, false
+	}
+
+	return claims, true
 }
 
 func extractToken(c *gin.Context) string {

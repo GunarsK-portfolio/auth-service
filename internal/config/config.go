@@ -4,7 +4,9 @@ package config
 import (
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	common "github.com/GunarsK-portfolio/portfolio-common/config"
 )
@@ -17,6 +19,10 @@ type Config struct {
 	common.JWTConfig
 	common.CookieConfig
 	DeniedSelfAssignRoles []string
+	MessagingAPIURL       string
+	ServiceUserName       string
+	VerifyRateLimitMax    int64
+	VerifyRateLimitWindow time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -28,6 +34,10 @@ func Load() *Config {
 		JWTConfig:             common.NewJWTConfig(),
 		CookieConfig:          common.NewCookieConfig(),
 		DeniedSelfAssignRoles: parseDeniedRoles(),
+		MessagingAPIURL:       os.Getenv("MESSAGING_API_URL"),
+		ServiceUserName:       os.Getenv("SERVICE_USER_NAME"),
+		VerifyRateLimitMax:    parseIntOrDefault("VERIFY_RATE_LIMIT_MAX", 3),
+		VerifyRateLimitWindow: parseDurationOrDefault("VERIFY_RATE_LIMIT_WINDOW", time.Hour),
 	}
 
 	// Defense-in-depth: Explicitly verify JWT secret is configured
@@ -53,4 +63,30 @@ func parseDeniedRoles() []string {
 		}
 	}
 	return roles
+}
+
+func parseIntOrDefault(key string, defaultVal int64) int64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		slog.Warn("Invalid integer for env var, using default", "key", key, "value", val, "default", defaultVal)
+		return defaultVal
+	}
+	return n
+}
+
+func parseDurationOrDefault(key string, defaultVal time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		slog.Warn("Invalid duration for env var, using default", "key", key, "value", val, "default", defaultVal)
+		return defaultVal
+	}
+	return d
 }
