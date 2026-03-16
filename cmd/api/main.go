@@ -107,7 +107,7 @@ func main() {
 			appLogger.Error("Failed to find service user", "username", cfg.ServiceUserName, "error", svcErr)
 			log.Fatal("Failed to find service user:", svcErr)
 		}
-		emailClient = email.NewClient(cfg.MessagingAPIURL, jwtService, svcUser.ID)
+		emailClient = email.NewClient(cfg.MessagingAPIURL, jwtService, svcUser.ID, cfg.ServiceUserName)
 		appLogger.Info("Email client configured", "messaging_api_url", cfg.MessagingAPIURL, "service_user", cfg.ServiceUserName)
 	} else {
 		appLogger.Warn("Email client not configured (MESSAGING_API_URL or SERVICE_USER_NAME missing)")
@@ -115,7 +115,7 @@ func main() {
 
 	//nolint:staticcheck // Embedded field name required for clarity
 	authService := service.NewAuthService(
-		userRepo, verifyRepo, jwtService, cfg.JWTConfig.Secret,
+		db, userRepo, verifyRepo, jwtService, cfg.JWTConfig.Secret,
 		redisClient, emailClient, cfg.DeniedSelfAssignRoles,
 		cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow,
 	)

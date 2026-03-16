@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var (
@@ -110,6 +111,7 @@ type AuthService interface {
 }
 
 type authService struct {
+	db                    *gorm.DB
 	userRepo              repository.UserRepository
 	verifyRepo            repository.VerificationTokenRepository
 	jwtService            jwt.Service
@@ -123,6 +125,7 @@ type authService struct {
 
 // NewAuthService creates a new AuthService instance.
 func NewAuthService(
+	db *gorm.DB,
 	userRepo repository.UserRepository,
 	verifyRepo repository.VerificationTokenRepository,
 	jwtService jwt.Service,
@@ -138,6 +141,7 @@ func NewAuthService(
 		denied[r] = true
 	}
 	return &authService{
+		db:                    db,
 		userRepo:              userRepo,
 		verifyRepo:            verifyRepo,
 		jwtService:            jwtService,
@@ -148,6 +152,16 @@ func NewAuthService(
 		verifyRateLimitMax:    verifyRateLimitMax,
 		verifyRateLimitWindow: verifyRateLimitWindow,
 	}
+}
+
+// runInTx executes fn inside a database transaction when a DB handle is
+// available. In test environments where db is nil the callback receives nil
+// (callers must guard repo construction accordingly).
+func (s *authService) runInTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if s.db == nil {
+		return fn(nil)
+	}
+	return s.db.WithContext(ctx).Transaction(fn)
 }
 
 func (s *authService) Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error) {
@@ -375,23 +389,34 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		user.RoleID = &roleID
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	// Generate verification token for later use
 	token, err := generateVerificationToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate verification token: %w", err)
 	}
 
-	vt := &models.VerificationToken{
-		UserID: user.ID,
-		Email:  user.Email,
-		Token:  token,
-	}
-	if err := s.verifyRepo.Create(ctx, vt); err != nil {
-		return nil, fmt.Errorf("failed to store verification token: %w", err)
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Create(ctx, user); err != nil {
+			return fmt.Errorf("failed to create user: %w", err)
+		}
+
+		vt := &models.VerificationToken{
+			UserID: user.ID,
+			Email:  user.Email,
+			Token:  token,
+		}
+		if err := verifyRepo.Create(ctx, vt); err != nil {
+			return fmt.Errorf("failed to store verification token: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &RegisterResponse{
@@ -432,15 +457,9 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 		return ErrTokenNotFound
 	}
 
-	// Use email from claims if available, fall back to DB
-	userEmail := user.Email
-	if emailFromClaims != "" {
-		userEmail = emailFromClaims
-	}
-
 	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", origin, vt.Token)
 
-	return s.emailClient.SendVerificationEmail(ctx, userEmail, user.Username, verifyURL)
+	return s.emailClient.SendVerificationEmail(ctx, user.Email, user.Username, verifyURL)
 }
 
 func (s *authService) VerifyEmail(ctx context.Context, token string) error {
@@ -460,15 +479,22 @@ func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 	}
 
 	user.EmailVerified = true
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return fmt.Errorf("failed to update email verified status: %w", err)
-	}
+	return s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
 
-	if err := s.verifyRepo.DeleteByUserID(ctx, vt.UserID); err != nil {
-		return fmt.Errorf("failed to delete verification token: %w", err)
-	}
-
-	return nil
+		if err := userRepo.Update(ctx, user); err != nil {
+			return fmt.Errorf("failed to update email verified status: %w", err)
+		}
+		if err := verifyRepo.DeleteByUserID(ctx, vt.UserID); err != nil {
+			return fmt.Errorf("failed to delete verification token: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *authService) UpdateProfile(ctx context.Context, userID int64, req ProfileUpdateRequest) (*ProfileResponse, error) {
@@ -477,37 +503,56 @@ func (s *authService) UpdateProfile(ctx context.Context, userID int64, req Profi
 		return nil, ErrUserNotFound
 	}
 
-	if req.Email != nil && *req.Email != user.Email {
-		// Check uniqueness
-		if existing, _ := s.userRepo.FindByEmail(ctx, *req.Email); existing != nil {
+	emailChanged := req.Email != nil && *req.Email != user.Email
+	if emailChanged {
+		existing, err := s.userRepo.FindByEmail(ctx, *req.Email)
+		if err == nil && existing != nil {
 			return nil, ErrEmailTaken
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("failed to check email uniqueness: %w", err)
 		}
 
 		user.Email = *req.Email
 		user.EmailVerified = false
-
-		// Delete old verification token, generate new one
-		_ = s.verifyRepo.DeleteByUserID(ctx, userID)
-		token, err := generateVerificationToken()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate verification token: %w", err)
-		}
-		vt := &models.VerificationToken{
-			UserID: userID,
-			Email:  *req.Email,
-			Token:  token,
-		}
-		if err := s.verifyRepo.Create(ctx, vt); err != nil {
-			return nil, fmt.Errorf("failed to store verification token: %w", err)
-		}
 	}
 
 	if req.DisplayName != nil {
 		user.DisplayName = req.DisplayName
 	}
 
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to update profile: %w", err)
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Update(ctx, user); err != nil {
+			return fmt.Errorf("failed to update profile: %w", err)
+		}
+
+		if emailChanged {
+			if err := verifyRepo.DeleteByUserID(ctx, userID); err != nil {
+				return fmt.Errorf("failed to delete old verification token: %w", err)
+			}
+			token, err := generateVerificationToken()
+			if err != nil {
+				return fmt.Errorf("failed to generate verification token: %w", err)
+			}
+			vt := &models.VerificationToken{
+				UserID: userID,
+				Email:  *req.Email,
+				Token:  token,
+			}
+			if err := verifyRepo.Create(ctx, vt); err != nil {
+				return fmt.Errorf("failed to store verification token: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &ProfileResponse{
@@ -546,8 +591,9 @@ func (s *authService) ChangePassword(ctx context.Context, userID int64, req Chan
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 
-	// Invalidate all sessions for this user
-	s.invalidateAllSessions(ctx, userID)
+	if err := s.invalidateAllSessions(ctx, userID); err != nil {
+		return fmt.Errorf("failed to invalidate sessions: %w", err)
+	}
 
 	return nil
 }
@@ -589,16 +635,22 @@ func (s *authService) signToken(userID int64, username, userEmail string, emailV
 	return token.SignedString([]byte(s.jwtSecret))
 }
 
-func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) {
-	// Scan for all session keys for this user and delete them
+func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) error {
 	pattern := fmt.Sprintf("refresh_token:%d:*", userID)
 	iter := s.redis.Scan(ctx, 0, pattern, 100).Iterator()
 	for iter.Next(ctx) {
-		s.redis.Del(ctx, iter.Val())
-		// Also delete corresponding remember_me key
+		if err := s.redis.Del(ctx, iter.Val()).Err(); err != nil {
+			return fmt.Errorf("failed to delete session key: %w", err)
+		}
 		sessionID := iter.Val()[len(fmt.Sprintf("refresh_token:%d:", userID)):]
-		s.redis.Del(ctx, fmt.Sprintf("remember_me:%d:%s", userID, sessionID))
+		if err := s.redis.Del(ctx, fmt.Sprintf("remember_me:%d:%s", userID, sessionID)).Err(); err != nil {
+			return fmt.Errorf("failed to delete remember_me key: %w", err)
+		}
 	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("failed to scan sessions: %w", err)
+	}
+	return nil
 }
 
 func generateVerificationToken() (string, error) {

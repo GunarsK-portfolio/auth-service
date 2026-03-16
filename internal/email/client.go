@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -16,19 +17,21 @@ import (
 
 // Client sends emails by calling the messaging-api.
 type Client struct {
-	baseURL    string
-	jwtService jwt.Service
-	httpClient *http.Client
-	svcUserID  int64
+	baseURL     string
+	jwtService  jwt.Service
+	httpClient  *http.Client
+	svcUserID   int64
+	svcUserName string
 }
 
 // NewClient creates a new email client.
-func NewClient(baseURL string, jwtService jwt.Service, svcUserID int64) *Client {
+func NewClient(baseURL string, jwtService jwt.Service, svcUserID int64, svcUserName string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		jwtService: jwtService,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		svcUserID:  svcUserID,
+		baseURL:     baseURL,
+		jwtService:  jwtService,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		svcUserID:   svcUserID,
+		svcUserName: svcUserName,
 	}
 }
 
@@ -76,7 +79,11 @@ func (c *Client) send(ctx context.Context, emailType, recipientEmail string, dat
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("messaging-api returned status %d", resp.StatusCode)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+		if err != nil {
+			return fmt.Errorf("messaging-api returned status %d (failed to read body)", resp.StatusCode)
+		}
+		return fmt.Errorf("messaging-api returned status %d: %s", resp.StatusCode, body)
 	}
 
 	return nil
@@ -86,5 +93,5 @@ func (c *Client) mintServiceToken() (string, error) {
 	scopes := map[string]string{
 		middleware.ResourceEmails: middleware.LevelEdit,
 	}
-	return c.jwtService.GenerateAccessToken(c.svcUserID, "svc-auth", scopes)
+	return c.jwtService.GenerateAccessToken(c.svcUserID, c.svcUserName, scopes)
 }

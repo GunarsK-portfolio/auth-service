@@ -72,7 +72,11 @@ func parseIntOrDefault(key string, defaultVal int64) int64 {
 	}
 	n, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
-		slog.Warn("Invalid integer for env var, using default", "key", key, "value", val, "default", defaultVal)
+		slog.Warn("Invalid integer for env var, using default", "key", key, "default", defaultVal)
+		return defaultVal
+	}
+	if n <= 0 {
+		slog.Warn("Non-positive integer for env var, using default", "key", key, "default", defaultVal)
 		return defaultVal
 	}
 	return n
@@ -85,7 +89,7 @@ func parseDurationOrDefault(key string, defaultVal time.Duration) time.Duration 
 	}
 	d, err := time.ParseDuration(val)
 	if err != nil {
-		slog.Warn("Invalid duration for env var, using default", "key", key, "value", val, "default", defaultVal)
+		slog.Warn("Invalid duration for env var, using default", "key", key, "default", defaultVal)
 		return defaultVal
 	}
 	return d

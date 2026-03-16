@@ -172,7 +172,7 @@ func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mo
 	}
 
 	svc := NewAuthService(
-		mockRepo, mockVerify, jwtService, testSecret,
+		nil, mockRepo, mockVerify, jwtService, testSecret,
 		redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour,
 	).(*authService)
 	return svc, mr, mockRepo, mockVerify
@@ -199,7 +199,7 @@ func TestNewAuthService(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	svc := NewAuthService(mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
+	svc := NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
 
 	if svc == nil {
 		t.Error("NewAuthService() should return non-nil service")
@@ -214,7 +214,7 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	var _ = NewAuthService(mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
+	var _ = NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
 }
 
 // =============================================================================
@@ -907,7 +907,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1049,7 +1049,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, shortExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate refresh token
 	token, err := jwtService.GenerateRefreshToken(1, "testuser", nil)
@@ -1191,7 +1191,7 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1221,7 +1221,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
