@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -79,11 +78,7 @@ func (c *Client) send(ctx context.Context, emailType, recipientEmail string, dat
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
-		if err != nil {
-			return fmt.Errorf("messaging-api returned status %d (failed to read body)", resp.StatusCode)
-		}
-		return fmt.Errorf("messaging-api returned status %d: %s", resp.StatusCode, body)
+		return fmt.Errorf("messaging-api returned status %d", resp.StatusCode)
 	}
 
 	return nil

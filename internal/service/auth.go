@@ -429,7 +429,10 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 func (s *authService) SendVerification(ctx context.Context, userID int64, emailFromClaims, origin string) error {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
-		return ErrUserNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
 	if user.EmailVerified {
@@ -446,7 +449,10 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 		return fmt.Errorf("failed to check rate limit: %w", err)
 	}
 	if count == 1 {
-		s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow)
+		if err := s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow).Err(); err != nil {
+			s.redis.Del(ctx, rateLimitKey)
+			return fmt.Errorf("failed to set rate limit expiry: %w", err)
+		}
 	}
 	if count > s.verifyRateLimitMax {
 		return ErrRateLimited
@@ -454,7 +460,19 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 
 	vt, err := s.verifyRepo.FindByUserID(ctx, userID)
 	if err != nil {
-		return ErrTokenNotFound
+		// Old accounts may not have a token yet — generate one
+		token, genErr := generateVerificationToken()
+		if genErr != nil {
+			return fmt.Errorf("failed to generate verification token: %w", genErr)
+		}
+		vt = &models.VerificationToken{
+			UserID: userID,
+			Email:  user.Email,
+			Token:  token,
+		}
+		if createErr := s.verifyRepo.Create(ctx, vt); createErr != nil {
+			return fmt.Errorf("failed to store verification token: %w", createErr)
+		}
 	}
 
 	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", origin, vt.Token)
@@ -465,12 +483,18 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 	vt, err := s.verifyRepo.FindByToken(ctx, token)
 	if err != nil {
-		return ErrTokenNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTokenNotFound
+		}
+		return fmt.Errorf("failed to find verification token: %w", err)
 	}
 
 	user, err := s.userRepo.FindByID(ctx, vt.UserID)
 	if err != nil {
-		return ErrUserNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
 	// Reject if user changed email since token was created
@@ -500,7 +524,10 @@ func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 func (s *authService) UpdateProfile(ctx context.Context, userID int64, req ProfileUpdateRequest) (*ProfileResponse, error) {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
-		return nil, ErrUserNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("failed to find user: %w", err)
 	}
 
 	emailChanged := req.Email != nil && *req.Email != user.Email
@@ -574,7 +601,10 @@ func (s *authService) ChangePassword(ctx context.Context, userID int64, req Chan
 
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
-		return ErrUserNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {

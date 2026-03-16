@@ -92,5 +92,9 @@ func parseDurationOrDefault(key string, defaultVal time.Duration) time.Duration 
 		slog.Warn("Invalid duration for env var, using default", "key", key, "default", defaultVal)
 		return defaultVal
 	}
+	if d <= 0 {
+		slog.Warn("Non-positive duration for env var, using default", "key", key, "default", defaultVal)
+		return defaultVal
+	}
 	return d
 }
