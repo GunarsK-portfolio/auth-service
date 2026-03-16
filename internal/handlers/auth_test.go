@@ -34,6 +34,22 @@ type mockAuthService struct {
 	verifyEmailFunc             func(ctx context.Context, token string) error
 	updateProfileFunc           func(ctx context.Context, userID int64, req service.ProfileUpdateRequest) (*service.ProfileResponse, error)
 	changePasswordFunc          func(ctx context.Context, userID int64, req service.ChangePasswordRequest) error
+	forgotPasswordFunc          func(ctx context.Context, email, origin string) error
+	resetPasswordFunc           func(ctx context.Context, token, newPassword string) error
+}
+
+func (m *mockAuthService) ForgotPassword(ctx context.Context, email, origin string) error {
+	if m.forgotPasswordFunc != nil {
+		return m.forgotPasswordFunc(ctx, email, origin)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockAuthService) ResetPassword(ctx context.Context, token, newPassword string) error {
+	if m.resetPasswordFunc != nil {
+		return m.resetPasswordFunc(ctx, token, newPassword)
+	}
+	return errors.New("not implemented")
 }
 
 func (m *mockAuthService) Login(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {

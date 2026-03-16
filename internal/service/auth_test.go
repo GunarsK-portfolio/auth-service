@@ -43,10 +43,14 @@ type mockUserRepository struct {
 // =============================================================================
 
 type mockVerifyRepo struct {
-	createFunc       func(ctx context.Context, token *models.VerificationToken) error
-	findByTokenFunc  func(ctx context.Context, token string) (*models.VerificationToken, error)
-	findByUserIDFunc func(ctx context.Context, userID int64) (*models.VerificationToken, error)
-	deleteByUserFunc func(ctx context.Context, userID int64) error
+	createFunc              func(ctx context.Context, token *models.VerificationToken) error
+	findByTokenFunc         func(ctx context.Context, token string) (*models.VerificationToken, error)
+	findByUserIDFunc        func(ctx context.Context, userID int64) (*models.VerificationToken, error)
+	findByTokenAndTypeFunc  func(ctx context.Context, tokenHash, tokenType string) (*models.VerificationToken, error)
+	findByUserIDAndTypeFunc func(ctx context.Context, userID int64, tokenType string) (*models.VerificationToken, error)
+	deleteByUserFunc        func(ctx context.Context, userID int64) error
+	deleteByUserAndTypeFunc func(ctx context.Context, userID int64, tokenType string) error
+	markUsedFunc            func(ctx context.Context, id int64) error
 }
 
 func (m *mockVerifyRepo) Create(ctx context.Context, token *models.VerificationToken) error {
@@ -70,9 +74,37 @@ func (m *mockVerifyRepo) FindByUserID(ctx context.Context, userID int64) (*model
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockVerifyRepo) FindByTokenAndType(ctx context.Context, tokenHash, tokenType string) (*models.VerificationToken, error) {
+	if m.findByTokenAndTypeFunc != nil {
+		return m.findByTokenAndTypeFunc(ctx, tokenHash, tokenType)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockVerifyRepo) FindByUserIDAndType(ctx context.Context, userID int64, tokenType string) (*models.VerificationToken, error) {
+	if m.findByUserIDAndTypeFunc != nil {
+		return m.findByUserIDAndTypeFunc(ctx, userID, tokenType)
+	}
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockVerifyRepo) DeleteByUserID(ctx context.Context, userID int64) error {
 	if m.deleteByUserFunc != nil {
 		return m.deleteByUserFunc(ctx, userID)
+	}
+	return nil
+}
+
+func (m *mockVerifyRepo) DeleteByUserIDAndType(ctx context.Context, userID int64, tokenType string) error {
+	if m.deleteByUserAndTypeFunc != nil {
+		return m.deleteByUserAndTypeFunc(ctx, userID, tokenType)
+	}
+	return nil
+}
+
+func (m *mockVerifyRepo) MarkUsed(ctx context.Context, id int64) error {
+	if m.markUsedFunc != nil {
+		return m.markUsedFunc(ctx, id)
 	}
 	return nil
 }
@@ -1673,12 +1705,18 @@ func TestVerifyEmail_Success(t *testing.T) {
 	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
+	rawToken := "abc123"
+	hashedToken := models.HashToken(rawToken)
+
 	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+		if token != hashedToken {
+			t.Errorf("FindByToken called with unhashed token %q, want hash", token)
+		}
 		return &models.VerificationToken{
 			ID:     1,
 			UserID: 1,
 			Email:  "test@example.com",
-			Token:  "abc123",
+			Token:  hashedToken,
 		}, nil
 	}
 
@@ -1695,11 +1733,13 @@ func TestVerifyEmail_Success(t *testing.T) {
 		updatedUser = user
 		return nil
 	}
-	mockVerify.deleteByUserFunc = func(ctx context.Context, userID int64) error {
+	markUsedCalled := false
+	mockVerify.markUsedFunc = func(ctx context.Context, id int64) error {
+		markUsedCalled = true
 		return nil
 	}
 
-	err := service.VerifyEmail(context.Background(), "abc123")
+	err := service.VerifyEmail(context.Background(), rawToken)
 
 	if err != nil {
 		t.Fatalf("VerifyEmail() error = %v", err)
@@ -1707,6 +1747,9 @@ func TestVerifyEmail_Success(t *testing.T) {
 
 	if updatedUser == nil || !updatedUser.EmailVerified {
 		t.Error("VerifyEmail() should set EmailVerified to true")
+	}
+	if !markUsedCalled {
+		t.Error("VerifyEmail() should call MarkUsed, not DeleteByUserID")
 	}
 }
 
@@ -1729,11 +1772,14 @@ func TestVerifyEmail_EmailMismatch(t *testing.T) {
 	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
+	rawToken := "abc123"
+	hashedToken := models.HashToken(rawToken)
+
 	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
 		return &models.VerificationToken{
 			UserID: 1,
 			Email:  "old@example.com",
-			Token:  "abc123",
+			Token:  hashedToken,
 		}, nil
 	}
 
@@ -1744,7 +1790,7 @@ func TestVerifyEmail_EmailMismatch(t *testing.T) {
 		}, nil
 	}
 
-	err := service.VerifyEmail(context.Background(), "abc123")
+	err := service.VerifyEmail(context.Background(), rawToken)
 
 	if !errors.Is(err, ErrTokenEmailMismatch) {
 		t.Errorf("VerifyEmail() error = %v, want %v", err, ErrTokenEmailMismatch)

@@ -40,6 +40,14 @@ type sendEmailRequest struct {
 	Data           map[string]string `json:"data"`
 }
 
+// SendPasswordResetEmail sends a password reset email via messaging-api.
+func (c *Client) SendPasswordResetEmail(ctx context.Context, recipientEmail, username, resetURL string) error {
+	return c.send(ctx, commonModels.EmailTypePasswordReset, recipientEmail, map[string]string{
+		"username":  username,
+		"reset_url": resetURL,
+	})
+}
+
 // SendVerificationEmail sends an email verification email via messaging-api.
 func (c *Client) SendVerificationEmail(ctx context.Context, recipientEmail, username, verifyURL string) error {
 	return c.send(ctx, commonModels.EmailTypeEmailVerification, recipientEmail, map[string]string{
