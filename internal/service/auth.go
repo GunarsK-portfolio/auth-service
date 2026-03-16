@@ -492,7 +492,9 @@ func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 		return fmt.Errorf("failed to find verification token: %w", err)
 	}
 
-	// Defense-in-depth: constant-time compare after DB lookup
+	// Defense-in-depth: constant-time compare after DB lookup.
+	// Redundant with the WHERE clause but guards against future refactors
+	// that might change lookup semantics (e.g. removing the hash filter).
 	if subtle.ConstantTimeCompare([]byte(tokenHash), []byte(vt.Token)) != 1 {
 		return ErrTokenNotFound
 	}
@@ -704,7 +706,9 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 		return fmt.Errorf("failed to find reset token: %w", err)
 	}
 
-	// Defense-in-depth: constant-time compare after DB lookup
+	// Defense-in-depth: constant-time compare after DB lookup.
+	// Redundant with the WHERE clause but guards against future refactors
+	// that might change lookup semantics (e.g. removing the hash filter).
 	if subtle.ConstantTimeCompare([]byte(tokenHash), []byte(vt.Token)) != 1 {
 		return ErrTokenNotFound
 	}

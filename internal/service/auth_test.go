@@ -1775,6 +1775,33 @@ func TestVerifyEmail_TokenNotFound(t *testing.T) {
 	}
 }
 
+func TestVerifyEmail_RejectsPasswordResetToken(t *testing.T) {
+	service, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	rawToken := "reset_token_123"
+
+	// Simulate: token exists as password_reset but not as email_verification
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
+		if tokenType == models.TokenTypeEmailVerification {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return &models.VerificationToken{
+			ID:     1,
+			UserID: 1,
+			Email:  "test@example.com",
+			Token:  models.HashToken(rawToken),
+			Type:   models.TokenTypePasswordReset,
+		}, nil
+	}
+
+	err := service.VerifyEmail(context.Background(), rawToken)
+
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("VerifyEmail() should reject password reset tokens, got %v", err)
+	}
+}
+
 func TestVerifyEmail_EmailMismatch(t *testing.T) {
 	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
