@@ -86,8 +86,12 @@ func (r *verificationTokenRepository) DeleteByUserIDAndType(ctx context.Context,
 
 func (r *verificationTokenRepository) MarkUsed(ctx context.Context, id int64) error {
 	now := time.Now()
-	if err := r.db.WithContext(ctx).Model(&models.VerificationToken{}).Where("id = ?", id).Update("used_at", now).Error; err != nil {
-		return fmt.Errorf("failed to mark token %d as used: %w", id, err)
+	result := r.db.WithContext(ctx).Model(&models.VerificationToken{}).Where("id = ? AND used_at IS NULL", id).Update("used_at", now)
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark token %d as used: %w", id, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("token %d already consumed", id)
 	}
 	return nil
 }

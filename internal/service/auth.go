@@ -8,12 +8,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
+	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -122,6 +124,7 @@ type authService struct {
 	jwtSecret             string
 	redis                 *redis.Client
 	emailClient           *email.Client
+	log                   *slog.Logger
 	deniedSelfAssignRoles map[string]bool
 	verifyRateLimitMax    int64
 	verifyRateLimitWindow time.Duration
@@ -136,6 +139,7 @@ func NewAuthService(
 	jwtSecret string,
 	redisClient *redis.Client,
 	emailClient *email.Client,
+	log *slog.Logger,
 	deniedRoles []string,
 	verifyRateLimitMax int64,
 	verifyRateLimitWindow time.Duration,
@@ -152,6 +156,7 @@ func NewAuthService(
 		jwtSecret:             jwtSecret,
 		redis:                 redisClient,
 		emailClient:           emailClient,
+		log:                   log,
 		deniedSelfAssignRoles: denied,
 		verifyRateLimitMax:    verifyRateLimitMax,
 		verifyRateLimitWindow: verifyRateLimitWindow,
@@ -643,7 +648,10 @@ func (s *authService) ForgotPassword(ctx context.Context, emailAddr, origin stri
 
 	user, err := s.userRepo.FindByEmail(ctx, emailAddr)
 	if err != nil {
-		return nil // Don't leak whether email exists
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil // Don't leak whether email exists
+		}
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
 	if !user.EmailVerified {
@@ -687,7 +695,10 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 	tokenHash := models.HashToken(token)
 	vt, err := s.verifyRepo.FindByTokenAndType(ctx, tokenHash, models.TokenTypePasswordReset)
 	if err != nil {
-		return ErrTokenNotFound
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTokenNotFound
+		}
+		return fmt.Errorf("failed to find reset token: %w", err)
 	}
 
 	// Defense-in-depth: constant-time compare after DB lookup
@@ -731,7 +742,13 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 		return err
 	}
 
-	return s.invalidateAllSessions(ctx, vt.UserID)
+	// Best-effort: password is already changed, don't fail the operation
+	// if session invalidation has issues (e.g. Redis outage)
+	if err := s.invalidateAllSessions(ctx, vt.UserID); err != nil {
+		logger.FromContext(ctx, s.log).Error("failed to invalidate sessions after password reset", "user_id", vt.UserID, "error", err)
+	}
+
+	return nil
 }
 
 // signToken creates a JWT with email fields populated. Uses golang-jwt directly
