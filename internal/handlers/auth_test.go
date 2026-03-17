@@ -34,6 +34,22 @@ type mockAuthService struct {
 	verifyEmailFunc             func(ctx context.Context, token string) error
 	updateProfileFunc           func(ctx context.Context, userID int64, req service.ProfileUpdateRequest) (*service.ProfileResponse, error)
 	changePasswordFunc          func(ctx context.Context, userID int64, req service.ChangePasswordRequest) error
+	forgotPasswordFunc          func(ctx context.Context, email, origin string) error
+	resetPasswordFunc           func(ctx context.Context, token, newPassword string) error
+}
+
+func (m *mockAuthService) ForgotPassword(ctx context.Context, email, origin string) error {
+	if m.forgotPasswordFunc != nil {
+		return m.forgotPasswordFunc(ctx, email, origin)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockAuthService) ResetPassword(ctx context.Context, token, newPassword string) error {
+	if m.resetPasswordFunc != nil {
+		return m.resetPasswordFunc(ctx, token, newPassword)
+	}
+	return errors.New("not implemented")
 }
 
 func (m *mockAuthService) Login(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
@@ -1902,6 +1918,292 @@ func TestRegister_Handler_ServiceError(t *testing.T) {
 	})
 
 	handler.Register(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+// =============================================================================
+// ForgotPassword Handler Tests
+// =============================================================================
+
+func TestForgotPassword_Success(t *testing.T) {
+	mockService := &mockAuthService{
+		forgotPasswordFunc: func(ctx context.Context, email, origin string) error {
+			return nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "test@example.com",
+	})
+	c.Request.Header.Set("Origin", "https://localhost:8543")
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestForgotPassword_AlwaysReturns200(t *testing.T) {
+	mockService := &mockAuthService{
+		forgotPasswordFunc: func(ctx context.Context, email, origin string) error {
+			return nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "nonexistent@example.com",
+	})
+	c.Request.Header.Set("Origin", "https://localhost:8543")
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d (enumeration leak)", http.StatusOK, w.Code)
+	}
+}
+
+func TestForgotPassword_MissingOrigin(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "test@example.com",
+	})
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestForgotPassword_DisallowedOrigin(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "test@example.com",
+	})
+	c.Request.Header.Set("Origin", "https://evil.com")
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestForgotPassword_RateLimited(t *testing.T) {
+	mockService := &mockAuthService{
+		forgotPasswordFunc: func(ctx context.Context, email, origin string) error {
+			return service.ErrRateLimited
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "test@example.com",
+	})
+	c.Request.Header.Set("Origin", "https://localhost:8543")
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, w.Code)
+	}
+}
+
+func TestForgotPassword_MissingEmail(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", map[string]string{})
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestForgotPassword_InvalidEmail(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "not-an-email",
+	})
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestForgotPassword_InternalError_Still200(t *testing.T) {
+	mockService := &mockAuthService{
+		forgotPasswordFunc: func(ctx context.Context, email, origin string) error {
+			return fmt.Errorf("database connection failed")
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/forgot-password", ForgotPasswordRequest{
+		Email: "test@example.com",
+	})
+	c.Request.Header.Set("Origin", "https://localhost:8543")
+
+	handler.ForgotPassword(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d (internal error should not leak)", http.StatusOK, w.Code)
+	}
+}
+
+// =============================================================================
+// ResetPassword Handler Tests
+// =============================================================================
+
+func TestResetPassword_Success(t *testing.T) {
+	mockService := &mockAuthService{
+		resetPasswordFunc: func(ctx context.Context, token, newPassword string) error {
+			return nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "abc123def456",
+		NewPassword: "newpassword123",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestResetPassword_TokenNotFound(t *testing.T) {
+	mockService := &mockAuthService{
+		resetPasswordFunc: func(ctx context.Context, token, newPassword string) error {
+			return service.ErrTokenNotFound
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "invalid_token",
+		NewPassword: "newpassword123",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_TokenExpired(t *testing.T) {
+	mockService := &mockAuthService{
+		resetPasswordFunc: func(ctx context.Context, token, newPassword string) error {
+			return service.ErrTokenExpired
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "expired_token",
+		NewPassword: "newpassword123",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_PasswordTooLong(t *testing.T) {
+	mockService := &mockAuthService{
+		resetPasswordFunc: func(ctx context.Context, token, newPassword string) error {
+			return service.ErrPasswordTooLong
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "valid_token",
+		NewPassword: strings.Repeat("a", 73),
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_MissingToken(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", map[string]string{
+		"new_password": "newpassword123",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_MissingPassword(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", map[string]string{
+		"token": "some_token",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_PasswordTooShort(t *testing.T) {
+	mockService := &mockAuthService{}
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "valid_token",
+		NewPassword: "short",
+	})
+
+	handler.ResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestResetPassword_ServiceError(t *testing.T) {
+	mockService := &mockAuthService{
+		resetPasswordFunc: func(ctx context.Context, token, newPassword string) error {
+			return fmt.Errorf("unexpected error")
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/reset-password", ResetPasswordRequest{
+		Token:       "valid_token",
+		NewPassword: "newpassword123",
+	})
+
+	handler.ResetPassword(c)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)

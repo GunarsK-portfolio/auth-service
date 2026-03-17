@@ -454,6 +454,17 @@ type ProfileUpdateRequest struct {
 	DisplayName *string `json:"display_name" binding:"omitempty,max=100"`
 }
 
+// ForgotPasswordRequest represents the forgot password request payload.
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// ResetPasswordRequest represents the password reset request payload.
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
+}
+
 // ChangePasswordRequest represents the change password request payload.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
@@ -632,6 +643,83 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	h.cookieHelper.ClearAuthCookies(c)
 
 	c.JSON(http.StatusOK, gin.H{"message": "password changed successfully"})
+}
+
+// ForgotPassword godoc
+// @Summary Request password reset
+// @Description Send a password reset email if the account exists and is verified
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body ForgotPasswordRequest true "Email address"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 429 {object} map[string]string
+// @Router /auth/forgot-password [post]
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	origin := strings.TrimRight(c.GetHeader("Origin"), "/")
+	if origin == "" || !h.allowedOrigins[origin] {
+		commonHandlers.RespondError(c, http.StatusBadRequest, "missing or disallowed origin")
+		return
+	}
+
+	err := h.authService.ForgotPassword(c.Request.Context(), req.Email, origin)
+	if err != nil {
+		if errors.Is(err, service.ErrRateLimited) {
+			commonHandlers.RespondError(c, http.StatusTooManyRequests, "too many requests, please try again later")
+			return
+		}
+		if errors.Is(err, service.ErrEmailNotConfigured) {
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "email service not configured")
+			return
+		}
+		// Log but don't expose internal errors — always return 200 below
+		c.Error(err) //nolint:errcheck // logged by middleware
+	}
+
+	// Always return success to prevent email enumeration
+	c.JSON(http.StatusOK, gin.H{"message": "if an account with that email exists, a password reset link has been sent"})
+}
+
+// ResetPassword godoc
+// @Summary Reset password with token
+// @Description Set a new password using a valid reset token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body ResetPasswordRequest true "Reset token and new password"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/reset-password [post]
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := h.authService.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrTokenNotFound):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "invalid or expired reset token")
+		case errors.Is(err, service.ErrTokenExpired):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "reset token has expired, please request a new one")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "password exceeds maximum length")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "password reset failed")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "password reset successfully"})
 }
 
 // authenticateRequest extracts and validates the JWT from cookies or Authorization header.

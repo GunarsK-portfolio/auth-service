@@ -51,6 +51,8 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 		v1.POST("/verify-email", authHandler.VerifyEmail)
 		v1.PATCH("/profile", authHandler.UpdateProfile)
 		v1.POST("/change-password", authHandler.ChangePassword)
+		v1.POST("/forgot-password", authHandler.ForgotPassword)
+		v1.POST("/reset-password", authHandler.ResetPassword)
 	}
 
 	// Swagger documentation (only if SWAGGER_HOST is configured)

@@ -4,15 +4,18 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
+	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -37,6 +40,7 @@ var (
 	ErrRateLimited         = errors.New("rate limit exceeded")
 	ErrPasswordMismatch    = errors.New("current password is incorrect")
 	ErrEmailNotConfigured  = errors.New("email service not configured")
+	ErrTokenExpired        = errors.New("token has expired")
 )
 
 // LoginRequest contains credentials for user login.
@@ -108,6 +112,8 @@ type AuthService interface {
 	VerifyEmail(ctx context.Context, token string) error
 	UpdateProfile(ctx context.Context, userID int64, req ProfileUpdateRequest) (*ProfileResponse, error)
 	ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error
+	ForgotPassword(ctx context.Context, email, origin string) error
+	ResetPassword(ctx context.Context, token, newPassword string) error
 }
 
 type authService struct {
@@ -118,6 +124,7 @@ type authService struct {
 	jwtSecret             string
 	redis                 *redis.Client
 	emailClient           *email.Client
+	log                   *slog.Logger
 	deniedSelfAssignRoles map[string]bool
 	verifyRateLimitMax    int64
 	verifyRateLimitWindow time.Duration
@@ -132,6 +139,7 @@ func NewAuthService(
 	jwtSecret string,
 	redisClient *redis.Client,
 	emailClient *email.Client,
+	log *slog.Logger,
 	deniedRoles []string,
 	verifyRateLimitMax int64,
 	verifyRateLimitWindow time.Duration,
@@ -148,6 +156,7 @@ func NewAuthService(
 		jwtSecret:             jwtSecret,
 		redis:                 redisClient,
 		emailClient:           emailClient,
+		log:                   log,
 		deniedSelfAssignRoles: denied,
 		verifyRateLimitMax:    verifyRateLimitMax,
 		verifyRateLimitWindow: verifyRateLimitWindow,
@@ -409,7 +418,8 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		vt := &models.VerificationToken{
 			UserID: user.ID,
 			Email:  user.Email,
-			Token:  token,
+			Token:  models.HashToken(token),
+			Type:   models.TokenTypeEmailVerification,
 		}
 		if err := verifyRepo.Create(ctx, vt); err != nil {
 			return fmt.Errorf("failed to store verification token: %w", err)
@@ -443,53 +453,50 @@ func (s *authService) SendVerification(ctx context.Context, userID int64, emailF
 		return ErrEmailNotConfigured
 	}
 
-	rateLimitKey := fmt.Sprintf("verify_ratelimit:%d", userID)
-	count, err := s.redis.Incr(ctx, rateLimitKey).Result()
-	if err != nil {
-		return fmt.Errorf("failed to check rate limit: %w", err)
-	}
-	if count == 1 {
-		if err := s.redis.Expire(ctx, rateLimitKey, s.verifyRateLimitWindow).Err(); err != nil {
-			s.redis.Del(ctx, rateLimitKey)
-			return fmt.Errorf("failed to set rate limit expiry: %w", err)
-		}
-	}
-	if count > s.verifyRateLimitMax {
-		return ErrRateLimited
+	if err := s.checkRateLimit(ctx, fmt.Sprintf("verify_ratelimit:%d", userID)); err != nil {
+		return err
 	}
 
-	vt, err := s.verifyRepo.FindByUserID(ctx, userID)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("failed to find verification token: %w", err)
-	}
-	if err != nil {
-		// Old accounts may not have a token yet — generate one
-		token, genErr := generateVerificationToken()
-		if genErr != nil {
-			return fmt.Errorf("failed to generate verification token: %w", genErr)
-		}
-		vt = &models.VerificationToken{
-			UserID: userID,
-			Email:  user.Email,
-			Token:  token,
-		}
-		if createErr := s.verifyRepo.Create(ctx, vt); createErr != nil {
-			return fmt.Errorf("failed to store verification token: %w", createErr)
-		}
+	// Always generate a fresh token since we can't recover raw from hash.
+	// Delete any existing unused verification token first.
+	if delErr := s.verifyRepo.DeleteByUserIDAndType(ctx, userID, models.TokenTypeEmailVerification); delErr != nil {
+		return fmt.Errorf("failed to delete old verification token: %w", delErr)
 	}
 
-	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", origin, vt.Token)
+	rawToken, err := generateVerificationToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate verification token: %w", err)
+	}
+	vt := &models.VerificationToken{
+		UserID: userID,
+		Email:  user.Email,
+		Token:  models.HashToken(rawToken),
+		Type:   models.TokenTypeEmailVerification,
+	}
+	if createErr := s.verifyRepo.Create(ctx, vt); createErr != nil {
+		return fmt.Errorf("failed to store verification token: %w", createErr)
+	}
+
+	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", origin, rawToken)
 
 	return s.emailClient.SendVerificationEmail(ctx, user.Email, user.Username, verifyURL)
 }
 
 func (s *authService) VerifyEmail(ctx context.Context, token string) error {
-	vt, err := s.verifyRepo.FindByToken(ctx, token)
+	tokenHash := models.HashToken(token)
+	vt, err := s.verifyRepo.FindByTokenAndType(ctx, tokenHash, models.TokenTypeEmailVerification)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrTokenNotFound
 		}
 		return fmt.Errorf("failed to find verification token: %w", err)
+	}
+
+	// Defense-in-depth: constant-time compare after DB lookup.
+	// Redundant with the WHERE clause but guards against future refactors
+	// that might change lookup semantics (e.g. removing the hash filter).
+	if subtle.ConstantTimeCompare([]byte(tokenHash), []byte(vt.Token)) != 1 {
+		return ErrTokenNotFound
 	}
 
 	user, err := s.userRepo.FindByID(ctx, vt.UserID)
@@ -517,8 +524,11 @@ func (s *authService) VerifyEmail(ctx context.Context, token string) error {
 		if err := userRepo.Update(ctx, user); err != nil {
 			return fmt.Errorf("failed to update email verified status: %w", err)
 		}
-		if err := verifyRepo.DeleteByUserID(ctx, vt.UserID); err != nil {
-			return fmt.Errorf("failed to delete verification token: %w", err)
+		if err := verifyRepo.MarkUsed(ctx, vt.ID); err != nil {
+			if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+				return ErrTokenNotFound
+			}
+			return fmt.Errorf("failed to mark verification token as used: %w", err)
 		}
 		return nil
 	})
@@ -574,7 +584,8 @@ func (s *authService) UpdateProfile(ctx context.Context, userID int64, req Profi
 			vt := &models.VerificationToken{
 				UserID: userID,
 				Email:  *req.Email,
-				Token:  token,
+				Token:  models.HashToken(token),
+				Type:   models.TokenTypeEmailVerification,
 			}
 			if err := verifyRepo.Create(ctx, vt); err != nil {
 				return fmt.Errorf("failed to store verification token: %w", err)
@@ -631,6 +642,128 @@ func (s *authService) ChangePassword(ctx context.Context, userID int64, req Chan
 	return nil
 }
 
+func (s *authService) ForgotPassword(ctx context.Context, emailAddr, origin string) error {
+	if s.emailClient == nil {
+		return ErrEmailNotConfigured
+	}
+
+	if err := s.checkRateLimit(ctx, fmt.Sprintf("reset_ratelimit:%s", emailAddr)); err != nil {
+		return err
+	}
+
+	user, err := s.userRepo.FindByEmail(ctx, emailAddr)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil // Don't leak whether email exists
+		}
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	if !user.EmailVerified {
+		return nil // Only allow reset for verified emails
+	}
+
+	// Delete any existing unused password reset tokens for this user
+	if err := s.verifyRepo.DeleteByUserIDAndType(ctx, user.ID, models.TokenTypePasswordReset); err != nil {
+		return fmt.Errorf("failed to delete existing reset token: %w", err)
+	}
+
+	rawToken, err := generateVerificationToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate reset token: %w", err)
+	}
+
+	expiresAt := time.Now().Add(1 * time.Hour)
+	vt := &models.VerificationToken{
+		UserID:    user.ID,
+		Email:     user.Email,
+		Token:     models.HashToken(rawToken),
+		Type:      models.TokenTypePasswordReset,
+		ExpiresAt: &expiresAt,
+	}
+	if err := s.verifyRepo.Create(ctx, vt); err != nil {
+		return fmt.Errorf("failed to store reset token: %w", err)
+	}
+
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", origin, rawToken)
+	return s.emailClient.SendPasswordResetEmail(ctx, user.Email, user.Username, resetURL)
+}
+
+func (s *authService) ResetPassword(ctx context.Context, token, newPassword string) error {
+	if len([]byte(newPassword)) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	if len([]byte(newPassword)) > 72 {
+		return ErrPasswordTooLong
+	}
+
+	tokenHash := models.HashToken(token)
+	vt, err := s.verifyRepo.FindByTokenAndType(ctx, tokenHash, models.TokenTypePasswordReset)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTokenNotFound
+		}
+		return fmt.Errorf("failed to find reset token: %w", err)
+	}
+
+	// Defense-in-depth: constant-time compare after DB lookup.
+	// Redundant with the WHERE clause but guards against future refactors
+	// that might change lookup semantics (e.g. removing the hash filter).
+	if subtle.ConstantTimeCompare([]byte(tokenHash), []byte(vt.Token)) != 1 {
+		return ErrTokenNotFound
+	}
+
+	if vt.ExpiresAt != nil && time.Now().After(*vt.ExpiresAt) {
+		_ = s.verifyRepo.MarkUsed(ctx, vt.ID)
+		return ErrTokenExpired
+	}
+
+	user, err := s.userRepo.FindByID(ctx, vt.UserID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user.PasswordHash = string(hash)
+
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		verifyRepo := s.verifyRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			verifyRepo = repository.NewVerificationTokenRepository(tx)
+		}
+
+		if err := userRepo.Update(ctx, user); err != nil {
+			return fmt.Errorf("failed to update password: %w", err)
+		}
+		if err := verifyRepo.MarkUsed(ctx, vt.ID); err != nil {
+			if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+				return ErrTokenNotFound
+			}
+			return fmt.Errorf("failed to mark reset token as used: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Best-effort: password is already changed, don't fail the operation
+	// if session invalidation has issues (e.g. Redis outage)
+	if err := s.invalidateAllSessions(ctx, vt.UserID); err != nil {
+		logger.FromContext(ctx, s.log).Error("failed to invalidate sessions after password reset", "user_id", vt.UserID, "error", err)
+	}
+
+	return nil
+}
+
 // signToken creates a JWT with email fields populated. Uses golang-jwt directly
 // because portfolio-common's GenerateAccessToken/GenerateRefreshToken don't
 // support email/emailVerified claims.
@@ -666,6 +799,23 @@ func (s *authService) signToken(userID int64, username, userEmail string, emailV
 
 	token := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *authService) checkRateLimit(ctx context.Context, key string) error {
+	count, err := s.redis.Incr(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check rate limit: %w", err)
+	}
+	if count == 1 {
+		if err := s.redis.Expire(ctx, key, s.verifyRateLimitWindow).Err(); err != nil {
+			s.redis.Del(ctx, key)
+			return fmt.Errorf("failed to set rate limit expiry: %w", err)
+		}
+	}
+	if count > s.verifyRateLimitMax {
+		return ErrRateLimited
+	}
+	return nil
 }
 
 func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) error {

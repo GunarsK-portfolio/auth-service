@@ -3,10 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/alicebob/miniredis/v2"
@@ -43,10 +47,14 @@ type mockUserRepository struct {
 // =============================================================================
 
 type mockVerifyRepo struct {
-	createFunc       func(ctx context.Context, token *models.VerificationToken) error
-	findByTokenFunc  func(ctx context.Context, token string) (*models.VerificationToken, error)
-	findByUserIDFunc func(ctx context.Context, userID int64) (*models.VerificationToken, error)
-	deleteByUserFunc func(ctx context.Context, userID int64) error
+	createFunc              func(ctx context.Context, token *models.VerificationToken) error
+	findByTokenFunc         func(ctx context.Context, token string) (*models.VerificationToken, error)
+	findByUserIDFunc        func(ctx context.Context, userID int64) (*models.VerificationToken, error)
+	findByTokenAndTypeFunc  func(ctx context.Context, tokenHash, tokenType string) (*models.VerificationToken, error)
+	findByUserIDAndTypeFunc func(ctx context.Context, userID int64, tokenType string) (*models.VerificationToken, error)
+	deleteByUserFunc        func(ctx context.Context, userID int64) error
+	deleteByUserAndTypeFunc func(ctx context.Context, userID int64, tokenType string) error
+	markUsedFunc            func(ctx context.Context, id int64) error
 }
 
 func (m *mockVerifyRepo) Create(ctx context.Context, token *models.VerificationToken) error {
@@ -70,9 +78,37 @@ func (m *mockVerifyRepo) FindByUserID(ctx context.Context, userID int64) (*model
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockVerifyRepo) FindByTokenAndType(ctx context.Context, tokenHash, tokenType string) (*models.VerificationToken, error) {
+	if m.findByTokenAndTypeFunc != nil {
+		return m.findByTokenAndTypeFunc(ctx, tokenHash, tokenType)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockVerifyRepo) FindByUserIDAndType(ctx context.Context, userID int64, tokenType string) (*models.VerificationToken, error) {
+	if m.findByUserIDAndTypeFunc != nil {
+		return m.findByUserIDAndTypeFunc(ctx, userID, tokenType)
+	}
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockVerifyRepo) DeleteByUserID(ctx context.Context, userID int64) error {
 	if m.deleteByUserFunc != nil {
 		return m.deleteByUserFunc(ctx, userID)
+	}
+	return nil
+}
+
+func (m *mockVerifyRepo) DeleteByUserIDAndType(ctx context.Context, userID int64, tokenType string) error {
+	if m.deleteByUserAndTypeFunc != nil {
+		return m.deleteByUserAndTypeFunc(ctx, userID, tokenType)
+	}
+	return nil
+}
+
+func (m *mockVerifyRepo) MarkUsed(ctx context.Context, id int64) error {
+	if m.markUsedFunc != nil {
+		return m.markUsedFunc(ctx, id)
 	}
 	return nil
 }
@@ -173,7 +209,7 @@ func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mo
 
 	svc := NewAuthService(
 		nil, mockRepo, mockVerify, jwtService, testSecret,
-		redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour,
+		redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
 	).(*authService)
 	return svc, mr, mockRepo, mockVerify
 }
@@ -199,7 +235,7 @@ func TestNewAuthService(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	svc := NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
+	svc := NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour)
 
 	if svc == nil {
 		t.Error("NewAuthService() should return non-nil service")
@@ -214,7 +250,7 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	var _ = NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, []string{"admin"}, 3, time.Hour)
+	var _ = NewAuthService(nil, mockRepo, mockVerify, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour)
 }
 
 // =============================================================================
@@ -907,7 +943,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1049,7 +1085,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, shortExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate refresh token
 	token, err := jwtService.GenerateRefreshToken(1, "testuser", nil)
@@ -1191,7 +1227,7 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1221,7 +1257,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1673,12 +1709,21 @@ func TestVerifyEmail_Success(t *testing.T) {
 	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	rawToken := "abc123"
+	hashedToken := models.HashToken(rawToken)
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
+		if token != hashedToken {
+			t.Errorf("FindByTokenAndType called with unhashed token %q, want hash", token)
+		}
+		if tokenType != models.TokenTypeEmailVerification {
+			t.Errorf("FindByTokenAndType called with type %q, want %q", tokenType, models.TokenTypeEmailVerification)
+		}
 		return &models.VerificationToken{
 			ID:     1,
 			UserID: 1,
 			Email:  "test@example.com",
-			Token:  "abc123",
+			Token:  hashedToken,
 		}, nil
 	}
 
@@ -1695,11 +1740,13 @@ func TestVerifyEmail_Success(t *testing.T) {
 		updatedUser = user
 		return nil
 	}
-	mockVerify.deleteByUserFunc = func(ctx context.Context, userID int64) error {
+	markUsedCalled := false
+	mockVerify.markUsedFunc = func(ctx context.Context, id int64) error {
+		markUsedCalled = true
 		return nil
 	}
 
-	err := service.VerifyEmail(context.Background(), "abc123")
+	err := service.VerifyEmail(context.Background(), rawToken)
 
 	if err != nil {
 		t.Fatalf("VerifyEmail() error = %v", err)
@@ -1708,13 +1755,16 @@ func TestVerifyEmail_Success(t *testing.T) {
 	if updatedUser == nil || !updatedUser.EmailVerified {
 		t.Error("VerifyEmail() should set EmailVerified to true")
 	}
+	if !markUsedCalled {
+		t.Error("VerifyEmail() should call MarkUsed, not DeleteByUserID")
+	}
 }
 
 func TestVerifyEmail_TokenNotFound(t *testing.T) {
 	service, mr, _, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 
@@ -1725,15 +1775,45 @@ func TestVerifyEmail_TokenNotFound(t *testing.T) {
 	}
 }
 
+func TestVerifyEmail_RejectsPasswordResetToken(t *testing.T) {
+	service, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	rawToken := "reset_token_123"
+
+	// Simulate: token exists as password_reset but not as email_verification
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
+		if tokenType == models.TokenTypeEmailVerification {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return &models.VerificationToken{
+			ID:     1,
+			UserID: 1,
+			Email:  "test@example.com",
+			Token:  models.HashToken(rawToken),
+			Type:   models.TokenTypePasswordReset,
+		}, nil
+	}
+
+	err := service.VerifyEmail(context.Background(), rawToken)
+
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("VerifyEmail() should reject password reset tokens, got %v", err)
+	}
+}
+
 func TestVerifyEmail_EmailMismatch(t *testing.T) {
 	service, mr, mockRepo, mockVerify := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockVerify.findByTokenFunc = func(ctx context.Context, token string) (*models.VerificationToken, error) {
+	rawToken := "abc123"
+	hashedToken := models.HashToken(rawToken)
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, token, tokenType string) (*models.VerificationToken, error) {
 		return &models.VerificationToken{
 			UserID: 1,
 			Email:  "old@example.com",
-			Token:  "abc123",
+			Token:  hashedToken,
 		}, nil
 	}
 
@@ -1744,7 +1824,7 @@ func TestVerifyEmail_EmailMismatch(t *testing.T) {
 		}, nil
 	}
 
-	err := service.VerifyEmail(context.Background(), "abc123")
+	err := service.VerifyEmail(context.Background(), rawToken)
 
 	if !errors.Is(err, ErrTokenEmailMismatch) {
 		t.Errorf("VerifyEmail() error = %v, want %v", err, ErrTokenEmailMismatch)
@@ -2039,4 +2119,381 @@ func TestSendVerification_RateLimit(t *testing.T) {
 	// so this requires a mock HTTP server for the email client.
 	// Covered by integration tests.
 	t.Skip("Rate limiting requires email client; covered by integration tests")
+}
+
+// =============================================================================
+// ForgotPassword Tests
+// =============================================================================
+
+func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository, *mockVerifyRepo, *httptest.Server) {
+	t.Helper()
+
+	emailServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	redisClient, mr := setupTestRedis(t)
+	jwtService, err := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("Failed to create JWT service: %v", err)
+	}
+	mockRepo := &mockUserRepository{}
+	mockVerify := &mockVerifyRepo{}
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:            id,
+			Username:      "testuser",
+			Email:         "test@example.com",
+			EmailVerified: false,
+		}, nil
+	}
+	mockRepo.getUserScopesFunc = func(ctx context.Context, userID int64) (map[string]string, error) {
+		return nil, nil
+	}
+
+	emailClient := email.NewClient(emailServer.URL, jwtService, 1, "svc-test")
+
+	svc := NewAuthService(
+		nil, mockRepo, mockVerify, jwtService, testSecret,
+		redisClient, emailClient, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
+	).(*authService)
+	return svc, mr, mockRepo, mockVerify, emailServer
+}
+
+func TestForgotPassword_UserNotFound(t *testing.T) {
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	err := svc.ForgotPassword(context.Background(), "nonexistent@example.com", "https://example.com")
+
+	if err != nil {
+		t.Errorf("ForgotPassword() should return nil for unknown email, got %v", err)
+	}
+}
+
+func TestForgotPassword_EmailNotVerified(t *testing.T) {
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Email:         emailAddr,
+			EmailVerified: false,
+		}, nil
+	}
+
+	err := svc.ForgotPassword(context.Background(), "unverified@example.com", "https://example.com")
+
+	if err != nil {
+		t.Errorf("ForgotPassword() should return nil for unverified email, got %v", err)
+	}
+}
+
+func TestForgotPassword_EmailNotConfigured(t *testing.T) {
+	svc, mr, _, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if !errors.Is(err, ErrEmailNotConfigured) {
+		t.Errorf("ForgotPassword() error = %v, want %v", err, ErrEmailNotConfigured)
+	}
+}
+
+func TestForgotPassword_RateLimit(t *testing.T) {
+	svc, mr, _, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	// Exhaust rate limit (max 3)
+	for i := 0; i < 3; i++ {
+		_ = svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("ForgotPassword() error = %v, want %v", err, ErrRateLimited)
+	}
+}
+
+func TestForgotPassword_DBError_Propagates(t *testing.T) {
+	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return nil, errors.New("database connection refused")
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if err == nil {
+		t.Error("ForgotPassword() should propagate DB errors")
+	}
+	if errors.Is(err, ErrEmailNotConfigured) {
+		t.Error("ForgotPassword() should not return ErrEmailNotConfigured for DB errors")
+	}
+}
+
+func TestForgotPassword_Success(t *testing.T) {
+	svc, mr, mockRepo, mockVerify, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Username:      "testuser",
+			Email:         emailAddr,
+			EmailVerified: true,
+		}, nil
+	}
+
+	deleteCalled := false
+	mockVerify.deleteByUserAndTypeFunc = func(ctx context.Context, userID int64, tokenType string) error {
+		if userID != 1 || tokenType != models.TokenTypePasswordReset {
+			t.Errorf("DeleteByUserIDAndType() called with userID=%d, type=%s", userID, tokenType)
+		}
+		deleteCalled = true
+		return nil
+	}
+
+	var createdToken *models.VerificationToken
+	mockVerify.createFunc = func(ctx context.Context, token *models.VerificationToken) error {
+		createdToken = token
+		return nil
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if err != nil {
+		t.Fatalf("ForgotPassword() unexpected error: %v", err)
+	}
+	if !deleteCalled {
+		t.Error("ForgotPassword() should delete existing reset tokens")
+	}
+	if createdToken == nil {
+		t.Fatal("ForgotPassword() should create a new token")
+	}
+	if createdToken.Type != models.TokenTypePasswordReset {
+		t.Errorf("Created token type = %s, want %s", createdToken.Type, models.TokenTypePasswordReset)
+	}
+	if createdToken.UserID != 1 {
+		t.Errorf("Created token userID = %d, want 1", createdToken.UserID)
+	}
+	if createdToken.ExpiresAt == nil {
+		t.Error("Created token should have ExpiresAt set")
+	}
+	if len(createdToken.Token) != 64 {
+		t.Errorf("Created token should be SHA-256 hash (64 hex chars), got %d chars", len(createdToken.Token))
+	}
+}
+
+// =============================================================================
+// ResetPassword Tests
+// =============================================================================
+
+func TestResetPassword_Success(t *testing.T) {
+	svc, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	rawToken := "abc123def456"
+	tokenHash := models.HashToken(rawToken)
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, hash, tokenType string) (*models.VerificationToken, error) {
+		if hash != tokenHash || tokenType != models.TokenTypePasswordReset {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return &models.VerificationToken{
+			ID:     1,
+			UserID: 1,
+			Email:  "test@example.com",
+			Token:  tokenHash,
+			Type:   models.TokenTypePasswordReset,
+		}, nil
+	}
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			Email:        "test@example.com",
+			PasswordHash: hashPassword(t, "oldpassword"),
+		}, nil
+	}
+
+	var updatedUser *models.User
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		updatedUser = user
+		return nil
+	}
+
+	markUsedCalled := false
+	mockVerify.markUsedFunc = func(ctx context.Context, id int64) error {
+		markUsedCalled = true
+		if id != 1 {
+			t.Errorf("MarkUsed called with id %d, want 1", id)
+		}
+		return nil
+	}
+
+	err := svc.ResetPassword(context.Background(), rawToken, "newpassword123")
+
+	if err != nil {
+		t.Fatalf("ResetPassword() error = %v", err)
+	}
+	if updatedUser == nil {
+		t.Fatal("ResetPassword() should update user")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(updatedUser.PasswordHash), []byte("newpassword123")); err != nil {
+		t.Error("ResetPassword() should hash the new password correctly")
+	}
+	if !markUsedCalled {
+		t.Error("ResetPassword() should call MarkUsed")
+	}
+}
+
+func TestResetPassword_TokenNotFound(t *testing.T) {
+	svc, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, hash, tokenType string) (*models.VerificationToken, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	err := svc.ResetPassword(context.Background(), "nonexistent", "newpassword123")
+
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("ResetPassword() error = %v, want %v", err, ErrTokenNotFound)
+	}
+}
+
+func TestResetPassword_TokenExpired(t *testing.T) {
+	svc, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	rawToken := "expired_token"
+	tokenHash := models.HashToken(rawToken)
+	expiredAt := time.Now().Add(-1 * time.Hour)
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, hash, tokenType string) (*models.VerificationToken, error) {
+		return &models.VerificationToken{
+			ID:        1,
+			UserID:    1,
+			Token:     tokenHash,
+			Type:      models.TokenTypePasswordReset,
+			ExpiresAt: &expiredAt,
+		}, nil
+	}
+
+	markUsedCalled := false
+	mockVerify.markUsedFunc = func(ctx context.Context, id int64) error {
+		markUsedCalled = true
+		return nil
+	}
+
+	err := svc.ResetPassword(context.Background(), rawToken, "newpassword123")
+
+	if !errors.Is(err, ErrTokenExpired) {
+		t.Errorf("ResetPassword() error = %v, want %v", err, ErrTokenExpired)
+	}
+	if !markUsedCalled {
+		t.Error("ResetPassword() should mark expired token as used")
+	}
+}
+
+func TestResetPassword_PasswordTooShort(t *testing.T) {
+	svc, mr, _, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	err := svc.ResetPassword(context.Background(), "token", "short")
+
+	if err == nil || err.Error() != "password must be at least 8 characters" {
+		t.Errorf("ResetPassword() error = %v, want password too short error", err)
+	}
+}
+
+func TestResetPassword_PasswordTooLong(t *testing.T) {
+	svc, mr, _, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	err := svc.ResetPassword(context.Background(), "token", strings.Repeat("a", 73))
+
+	if !errors.Is(err, ErrPasswordTooLong) {
+		t.Errorf("ResetPassword() error = %v, want %v", err, ErrPasswordTooLong)
+	}
+}
+
+func TestResetPassword_DBError_Propagates(t *testing.T) {
+	svc, mr, _, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, hash, tokenType string) (*models.VerificationToken, error) {
+		return nil, errors.New("database connection refused")
+	}
+
+	err := svc.ResetPassword(context.Background(), "token", "newpassword123")
+
+	// Should propagate DB errors, not wrap as ErrTokenNotFound
+	if errors.Is(err, ErrTokenNotFound) {
+		t.Error("ResetPassword() should propagate DB errors, not mask as ErrTokenNotFound")
+	}
+	if err == nil {
+		t.Error("ResetPassword() should return error on DB failure")
+	}
+}
+
+func TestResetPassword_InvalidatesAllSessions(t *testing.T) {
+	svc, mr, mockRepo, mockVerify := setupTestAuthService(t)
+	defer mr.Close()
+
+	rawToken := "valid_token"
+	tokenHash := models.HashToken(rawToken)
+
+	mockVerify.findByTokenAndTypeFunc = func(ctx context.Context, hash, tokenType string) (*models.VerificationToken, error) {
+		return &models.VerificationToken{
+			ID:     1,
+			UserID: 1,
+			Token:  tokenHash,
+			Type:   models.TokenTypePasswordReset,
+		}, nil
+	}
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:           1,
+			Username:     "testuser",
+			PasswordHash: hashPassword(t, "oldpassword"),
+		}, nil
+	}
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		return nil
+	}
+	mockVerify.markUsedFunc = func(ctx context.Context, id int64) error {
+		return nil
+	}
+
+	// Store a session in Redis to verify it gets invalidated
+	_ = mr.Set("refresh_token:1:session1", "token_value")
+	_ = mr.Set("remember_me:1:session1", "1")
+
+	err := svc.ResetPassword(context.Background(), rawToken, "newpassword123")
+
+	if err != nil {
+		t.Fatalf("ResetPassword() error = %v", err)
+	}
+
+	// Verify session was invalidated
+	if mr.Exists("refresh_token:1:session1") {
+		t.Error("ResetPassword() should invalidate all sessions")
+	}
 }

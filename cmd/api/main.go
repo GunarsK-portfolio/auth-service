@@ -116,7 +116,7 @@ func main() {
 	//nolint:staticcheck // Embedded field name required for clarity
 	authService := service.NewAuthService(
 		db, userRepo, verifyRepo, jwtService, cfg.JWTConfig.Secret,
-		redisClient, emailClient, cfg.DeniedSelfAssignRoles,
+		redisClient, emailClient, appLogger, cfg.DeniedSelfAssignRoles,
 		cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow,
 	)
 
