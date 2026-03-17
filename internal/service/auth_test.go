@@ -2244,6 +2244,60 @@ func TestForgotPassword_DBError_Propagates(t *testing.T) {
 	}
 }
 
+func TestForgotPassword_Success(t *testing.T) {
+	svc, mr, mockRepo, mockVerify, emailServer := setupTestAuthServiceWithEmail(t)
+	defer mr.Close()
+	defer emailServer.Close()
+
+	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
+		return &models.User{
+			ID:            1,
+			Username:      "testuser",
+			Email:         emailAddr,
+			EmailVerified: true,
+		}, nil
+	}
+
+	deleteCalled := false
+	mockVerify.deleteByUserAndTypeFunc = func(ctx context.Context, userID int64, tokenType string) error {
+		if userID != 1 || tokenType != models.TokenTypePasswordReset {
+			t.Errorf("DeleteByUserIDAndType() called with userID=%d, type=%s", userID, tokenType)
+		}
+		deleteCalled = true
+		return nil
+	}
+
+	var createdToken *models.VerificationToken
+	mockVerify.createFunc = func(ctx context.Context, token *models.VerificationToken) error {
+		createdToken = token
+		return nil
+	}
+
+	err := svc.ForgotPassword(context.Background(), "test@example.com", "https://example.com")
+
+	if err != nil {
+		t.Fatalf("ForgotPassword() unexpected error: %v", err)
+	}
+	if !deleteCalled {
+		t.Error("ForgotPassword() should delete existing reset tokens")
+	}
+	if createdToken == nil {
+		t.Fatal("ForgotPassword() should create a new token")
+	}
+	if createdToken.Type != models.TokenTypePasswordReset {
+		t.Errorf("Created token type = %s, want %s", createdToken.Type, models.TokenTypePasswordReset)
+	}
+	if createdToken.UserID != 1 {
+		t.Errorf("Created token userID = %d, want 1", createdToken.UserID)
+	}
+	if createdToken.ExpiresAt == nil {
+		t.Error("Created token should have ExpiresAt set")
+	}
+	if len(createdToken.Token) != 64 {
+		t.Errorf("Created token should be SHA-256 hash (64 hex chars), got %d chars", len(createdToken.Token))
+	}
+}
+
 // =============================================================================
 // ResetPassword Tests
 // =============================================================================
