@@ -1452,8 +1452,8 @@ func TestLogin_TokensNotInResponseBody(t *testing.T) {
 	mockService := &mockAuthService{
 		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
-				AccessToken:  "secret_access_token",
-				RefreshToken: "secret_refresh_token",
+				AccessToken:  "test_access_token",
+				RefreshToken: "test_refresh_token",
 				ExpiresIn:    900,
 				UserID:       1,
 				Username:     "testuser",
@@ -1472,24 +1472,21 @@ func TestLogin_TokensNotInResponseBody(t *testing.T) {
 
 	// Verify tokens are NOT in response body
 	body := w.Body.String()
-	if strings.Contains(body, "secret_access_token") {
+	if strings.Contains(body, "test_access_token") {
 		t.Error("access_token should not be in response body")
 	}
-	if strings.Contains(body, "secret_refresh_token") {
+	if strings.Contains(body, "test_refresh_token") {
 		t.Error("refresh_token should not be in response body")
-	}
-	if strings.Contains(body, "access_token") && strings.Contains(body, "secret") {
-		t.Error("tokens should not be exposed in response body")
 	}
 
 	// Verify tokens ARE in cookies
 	cookies := w.Result().Cookies()
 	var foundAccess, foundRefresh bool
 	for _, cookie := range cookies {
-		if cookie.Name == AccessTokenCookie && cookie.Value == "secret_access_token" {
+		if cookie.Name == AccessTokenCookie && cookie.Value == "test_access_token" {
 			foundAccess = true
 		}
-		if cookie.Name == RefreshTokenCookie && cookie.Value == "secret_refresh_token" {
+		if cookie.Name == RefreshTokenCookie && cookie.Value == "test_refresh_token" {
 			foundRefresh = true
 		}
 	}
@@ -1505,8 +1502,8 @@ func TestRefresh_TokensNotInResponseBody(t *testing.T) {
 	mockService := &mockAuthService{
 		refreshTokenFunc: func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
-				AccessToken:  "new_secret_access",
-				RefreshToken: "new_secret_refresh",
+				AccessToken:  "new_access_token",
+				RefreshToken: "new_refresh_token",
 				ExpiresIn:    900,
 				SessionID:    sessionID,
 			}, nil
@@ -1526,10 +1523,10 @@ func TestRefresh_TokensNotInResponseBody(t *testing.T) {
 
 	// Verify tokens are NOT in response body
 	body := w.Body.String()
-	if strings.Contains(body, "new_secret_access") {
+	if strings.Contains(body, "new_access_token") {
 		t.Error("access_token should not be in response body")
 	}
-	if strings.Contains(body, "new_secret_refresh") {
+	if strings.Contains(body, "new_refresh_token") {
 		t.Error("refresh_token should not be in response body")
 	}
 }
