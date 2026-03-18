@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	"github.com/GunarsK-portfolio/portfolio-common/metrics"
+	"github.com/GunarsK-portfolio/portfolio-common/queue"
 	commonrepo "github.com/GunarsK-portfolio/portfolio-common/repository"
 	"github.com/GunarsK-portfolio/portfolio-common/server"
 	"github.com/gin-gonic/gin"
@@ -99,19 +99,21 @@ func main() {
 		log.Fatal("Failed to create JWT service:", err)
 	}
 
-	// Initialize email client (optional -- service works without it but can't send emails)
-	var emailClient *email.Client
-	if cfg.MessagingAPIURL != "" && cfg.ServiceUserName != "" {
-		svcUser, svcErr := userRepo.FindByUsername(context.Background(), cfg.ServiceUserName)
-		if svcErr != nil {
-			appLogger.Error("Failed to find service user", "username", cfg.ServiceUserName, "error", svcErr)
-			log.Fatal("Failed to find service user:", svcErr)
-		}
-		emailClient = email.NewClient(cfg.MessagingAPIURL, jwtService, svcUser.ID, cfg.ServiceUserName)
-		appLogger.Info("Email client configured", "messaging_api_url", cfg.MessagingAPIURL, "service_user", cfg.ServiceUserName)
-	} else {
-		appLogger.Warn("Email client not configured (MESSAGING_API_URL or SERVICE_USER_NAME missing)")
+	// Initialize RabbitMQ publisher for email delivery
+	publisher, err := queue.NewRabbitMQPublisher(cfg.RabbitMQConfig)
+	if err != nil {
+		appLogger.Error("Failed to connect to RabbitMQ", "error", err)
+		log.Fatal("Failed to connect to RabbitMQ:", err)
 	}
+	defer func() {
+		if closeErr := publisher.Close(); closeErr != nil {
+			appLogger.Error("Failed to close RabbitMQ publisher", "error", closeErr)
+		}
+	}()
+	appLogger.Info("RabbitMQ connection established")
+	healthAgg.Register(health.NewRabbitMQChecker(publisher.Connection()))
+
+	emailClient := email.NewClient(db, publisher)
 
 	//nolint:staticcheck // Embedded field name required for clarity
 	authService := service.NewAuthService(

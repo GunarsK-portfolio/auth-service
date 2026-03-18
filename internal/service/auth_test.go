@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/alicebob/miniredis/v2"
@@ -2125,12 +2122,27 @@ func TestSendVerification_RateLimit(t *testing.T) {
 // ForgotPassword Tests
 // =============================================================================
 
-func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository, *mockVerifyRepo, *httptest.Server) {
-	t.Helper()
+type mockEmailSender struct {
+	sendVerificationFunc  func(ctx context.Context, recipientEmail, username, verifyURL string) error
+	sendPasswordResetFunc func(ctx context.Context, recipientEmail, username, resetURL string) error
+}
 
-	emailServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-	}))
+func (m *mockEmailSender) SendVerificationEmail(ctx context.Context, recipientEmail, username, verifyURL string) error {
+	if m.sendVerificationFunc != nil {
+		return m.sendVerificationFunc(ctx, recipientEmail, username, verifyURL)
+	}
+	return nil
+}
+
+func (m *mockEmailSender) SendPasswordResetEmail(ctx context.Context, recipientEmail, username, resetURL string) error {
+	if m.sendPasswordResetFunc != nil {
+		return m.sendPasswordResetFunc(ctx, recipientEmail, username, resetURL)
+	}
+	return nil
+}
+
+func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Miniredis, *mockUserRepository, *mockVerifyRepo, *mockEmailSender) {
+	t.Helper()
 
 	redisClient, mr := setupTestRedis(t)
 	jwtService, err := jwt.NewService(testSecret, testAccessExpiry, testRefreshExpiry)
@@ -2139,6 +2151,7 @@ func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Minir
 	}
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
+	mockEmail := &mockEmailSender{}
 
 	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
 		return &models.User{
@@ -2152,19 +2165,16 @@ func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Minir
 		return nil, nil
 	}
 
-	emailClient := email.NewClient(emailServer.URL, jwtService, 1, "svc-test")
-
 	svc := NewAuthService(
 		nil, mockRepo, mockVerify, jwtService, testSecret,
-		redisClient, emailClient, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
+		redisClient, mockEmail, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
 	).(*authService)
-	return svc, mr, mockRepo, mockVerify, emailServer
+	return svc, mr, mockRepo, mockVerify, mockEmail
 }
 
 func TestForgotPassword_UserNotFound(t *testing.T) {
-	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	svc, mr, mockRepo, _, _ := setupTestAuthServiceWithEmail(t)
 	defer mr.Close()
-	defer emailServer.Close()
 
 	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
 		return nil, gorm.ErrRecordNotFound
@@ -2178,9 +2188,8 @@ func TestForgotPassword_UserNotFound(t *testing.T) {
 }
 
 func TestForgotPassword_EmailNotVerified(t *testing.T) {
-	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	svc, mr, mockRepo, _, _ := setupTestAuthServiceWithEmail(t)
 	defer mr.Close()
-	defer emailServer.Close()
 
 	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
 		return &models.User{
@@ -2209,9 +2218,8 @@ func TestForgotPassword_EmailNotConfigured(t *testing.T) {
 }
 
 func TestForgotPassword_RateLimit(t *testing.T) {
-	svc, mr, _, _, emailServer := setupTestAuthServiceWithEmail(t)
+	svc, mr, _, _, _ := setupTestAuthServiceWithEmail(t)
 	defer mr.Close()
-	defer emailServer.Close()
 
 	// Exhaust rate limit (max 3)
 	for i := 0; i < 3; i++ {
@@ -2226,9 +2234,8 @@ func TestForgotPassword_RateLimit(t *testing.T) {
 }
 
 func TestForgotPassword_DBError_Propagates(t *testing.T) {
-	svc, mr, mockRepo, _, emailServer := setupTestAuthServiceWithEmail(t)
+	svc, mr, mockRepo, _, _ := setupTestAuthServiceWithEmail(t)
 	defer mr.Close()
-	defer emailServer.Close()
 
 	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
 		return nil, errors.New("database connection refused")
@@ -2245,9 +2252,8 @@ func TestForgotPassword_DBError_Propagates(t *testing.T) {
 }
 
 func TestForgotPassword_Success(t *testing.T) {
-	svc, mr, mockRepo, mockVerify, emailServer := setupTestAuthServiceWithEmail(t)
+	svc, mr, mockRepo, mockVerify, _ := setupTestAuthServiceWithEmail(t)
 	defer mr.Close()
-	defer emailServer.Close()
 
 	mockRepo.findByEmailFunc = func(ctx context.Context, emailAddr string) (*models.User, error) {
 		return &models.User{

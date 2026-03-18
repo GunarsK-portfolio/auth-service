@@ -1,100 +1,80 @@
-// Package email provides an HTTP client for sending emails via messaging-api.
+// Package email publishes emails via RabbitMQ for async delivery.
 package email
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
 
-	"github.com/GunarsK-portfolio/portfolio-common/jwt"
-	"github.com/GunarsK-portfolio/portfolio-common/middleware"
-	commonModels "github.com/GunarsK-portfolio/portfolio-common/models"
+	"github.com/GunarsK-portfolio/portfolio-common/models"
+	"github.com/GunarsK-portfolio/portfolio-common/queue"
+	"github.com/GunarsK-portfolio/portfolio-common/renderer"
+	"gorm.io/gorm"
 )
 
-// Client sends emails by calling the messaging-api.
+// Sender defines the interface for sending emails.
+type Sender interface {
+	SendVerificationEmail(ctx context.Context, recipientEmail, username, verifyURL string) error
+	SendPasswordResetEmail(ctx context.Context, recipientEmail, username, resetURL string) error
+}
+
+// Client renders email templates, persists them to the database,
+// and publishes an event to RabbitMQ for the messaging-service worker.
 type Client struct {
-	baseURL     string
-	jwtService  jwt.Service
-	httpClient  *http.Client
-	svcUserID   int64
-	svcUserName string
+	db        *gorm.DB
+	publisher queue.Publisher
 }
 
 // NewClient creates a new email client.
-func NewClient(baseURL string, jwtService jwt.Service, svcUserID int64, svcUserName string) *Client {
+func NewClient(db *gorm.DB, publisher queue.Publisher) *Client {
 	return &Client{
-		baseURL:     baseURL,
-		jwtService:  jwtService,
-		httpClient:  &http.Client{Timeout: 10 * time.Second},
-		svcUserID:   svcUserID,
-		svcUserName: svcUserName,
+		db:        db,
+		publisher: publisher,
 	}
 }
 
-type sendEmailRequest struct {
-	Type           string            `json:"type"`
-	RecipientEmail string            `json:"recipient_email"`
-	Data           map[string]string `json:"data"`
-}
-
-// SendPasswordResetEmail sends a password reset email via messaging-api.
-func (c *Client) SendPasswordResetEmail(ctx context.Context, recipientEmail, username, resetURL string) error {
-	return c.send(ctx, commonModels.EmailTypePasswordReset, recipientEmail, map[string]string{
-		"username":  username,
-		"reset_url": resetURL,
-	})
-}
-
-// SendVerificationEmail sends an email verification email via messaging-api.
+// SendVerificationEmail renders and queues an email verification email.
 func (c *Client) SendVerificationEmail(ctx context.Context, recipientEmail, username, verifyURL string) error {
-	return c.send(ctx, commonModels.EmailTypeEmailVerification, recipientEmail, map[string]string{
+	return c.send(ctx, models.EmailTypeEmailVerification, recipientEmail, map[string]string{
 		"username":   username,
 		"verify_url": verifyURL,
 	})
 }
 
-func (c *Client) send(ctx context.Context, emailType, recipientEmail string, data map[string]string) error {
-	body, err := json.Marshal(sendEmailRequest{
-		Type:           emailType,
-		RecipientEmail: recipientEmail,
-		Data:           data,
+// SendPasswordResetEmail renders and queues a password reset email.
+func (c *Client) SendPasswordResetEmail(ctx context.Context, recipientEmail, username, resetURL string) error {
+	return c.send(ctx, models.EmailTypePasswordReset, recipientEmail, map[string]string{
+		"username":  username,
+		"reset_url": resetURL,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal email request: %w", err)
+}
+
+func (c *Client) send(ctx context.Context, emailType, recipientEmail string, data map[string]string) error {
+	subject, ok := renderer.SubjectForType(emailType)
+	if !ok {
+		return fmt.Errorf("unsupported email type: %s", emailType)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/emails", bytes.NewReader(body))
+	html, err := renderer.Render(emailType, data)
 	if err != nil {
-		return fmt.Errorf("failed to create email request: %w", err)
+		return fmt.Errorf("failed to render email template: %w", err)
 	}
 
-	token, err := c.mintServiceToken()
-	if err != nil {
-		return fmt.Errorf("failed to mint service token: %w", err)
+	email := &models.Email{
+		Type:           emailType,
+		RecipientEmail: &recipientEmail,
+		Subject:        subject,
+		Message:        html,
+		Status:         models.EmailStatusPending,
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send email request: %w", err)
+	if err := c.db.WithContext(ctx).Omit("ID", "CreatedAt", "UpdatedAt").Create(email).Error; err != nil {
+		return fmt.Errorf("failed to create email record: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("messaging-api returned status %d", resp.StatusCode)
+	event := models.EmailEvent{EmailID: email.ID}
+	if err := c.publisher.Publish(ctx, event); err != nil {
+		return fmt.Errorf("failed to publish email event: %w", err)
 	}
 
 	return nil
-}
-
-func (c *Client) mintServiceToken() (string, error) {
-	scopes := map[string]string{
-		middleware.ResourceEmails: middleware.LevelEdit,
-	}
-	return c.jwtService.GenerateAccessToken(c.svcUserID, c.svcUserName, scopes)
 }

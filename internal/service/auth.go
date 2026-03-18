@@ -123,7 +123,7 @@ type authService struct {
 	jwtService            jwt.Service
 	jwtSecret             string
 	redis                 *redis.Client
-	emailClient           *email.Client
+	emailClient           email.Sender
 	log                   *slog.Logger
 	deniedSelfAssignRoles map[string]bool
 	verifyRateLimitMax    int64
@@ -138,7 +138,7 @@ func NewAuthService(
 	jwtService jwt.Service,
 	jwtSecret string,
 	redisClient *redis.Client,
-	emailClient *email.Client,
+	emailClient email.Sender,
 	log *slog.Logger,
 	deniedRoles []string,
 	verifyRateLimitMax int64,
