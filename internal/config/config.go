@@ -18,9 +18,8 @@ type Config struct {
 	common.RedisConfig
 	common.JWTConfig
 	common.CookieConfig
+	common.RabbitMQConfig
 	DeniedSelfAssignRoles []string
-	MessagingAPIURL       string
-	ServiceUserName       string
 	VerifyRateLimitMax    int64
 	VerifyRateLimitWindow time.Duration
 }
@@ -33,9 +32,8 @@ func Load() *Config {
 		RedisConfig:           common.NewRedisConfig(),
 		JWTConfig:             common.NewJWTConfig(),
 		CookieConfig:          common.NewCookieConfig(),
+		RabbitMQConfig:        common.NewRabbitMQConfig(),
 		DeniedSelfAssignRoles: parseDeniedRoles(),
-		MessagingAPIURL:       os.Getenv("MESSAGING_API_URL"),
-		ServiceUserName:       os.Getenv("SERVICE_USER_NAME"),
 		VerifyRateLimitMax:    parseIntOrDefault("VERIFY_RATE_LIMIT_MAX", 3),
 		VerifyRateLimitWindow: parseDurationOrDefault("VERIFY_RATE_LIMIT_WINDOW", time.Hour),
 	}
