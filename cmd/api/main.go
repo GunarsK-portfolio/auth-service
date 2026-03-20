@@ -89,6 +89,7 @@ func main() {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	verifyRepo := repository.NewVerificationTokenRepository(db)
+	oauthRepo := repository.NewOAuthAccountRepository(db)
 	actionLogRepo := commonrepo.NewActionLogRepository(db)
 
 	// Initialize services
@@ -117,16 +118,17 @@ func main() {
 
 	//nolint:staticcheck // Embedded field name required for clarity
 	authService := service.NewAuthService(
-		db, userRepo, verifyRepo, jwtService, cfg.JWTConfig.Secret,
+		db, userRepo, verifyRepo, oauthRepo, jwtService, cfg.JWTConfig.Secret,
 		redisClient, emailClient, appLogger, cfg.DeniedSelfAssignRoles,
 		cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow,
+		cfg.GoogleOAuth,
 	)
 
 	// Initialize cookie helper
 	cookieHelper := handlers.NewCookieHelper(cfg.CookieConfig)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService, actionLogRepo, cookieHelper, jwtService, cfg.AllowedOrigins, cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow.String())
+	authHandler := handlers.NewAuthHandler(authService, actionLogRepo, cookieHelper, jwtService, redisClient, cfg.AllowedOrigins, cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow.String())
 
 	// Setup router with custom middleware
 	router := gin.New()

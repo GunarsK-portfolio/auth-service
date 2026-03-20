@@ -11,6 +11,11 @@ import (
 	"log/slog"
 	"time"
 
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+
 	"github.com/GunarsK-portfolio/auth-service/internal/email"
 	"github.com/GunarsK-portfolio/auth-service/internal/models"
 	"github.com/GunarsK-portfolio/auth-service/internal/repository"
@@ -18,29 +23,41 @@ import (
 	"github.com/GunarsK-portfolio/portfolio-common/logger"
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
+var ErrGoogleOAuthDisabled = errors.New("google oauth is not configured")
+
+const (
+	redisRefreshTokenPrefix = "refresh_token:%d:%s"
+	redisRememberMePrefix   = "remember_me:%d:%s"
+)
+
 var (
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrUserNotFound        = errors.New("user not found")
-	ErrUsernameTaken       = errors.New("username already taken")
-	ErrEmailTaken          = errors.New("email already taken")
-	ErrInvalidRoleCode     = errors.New("invalid role code")
-	ErrRoleNotAllowed      = errors.New("role not allowed for self-registration")
-	ErrPasswordTooLong     = errors.New("password exceeds 72 bytes")
-	ErrInvalidRefreshToken = errors.New("invalid refresh token")
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrInvalidToken        = errors.New("invalid or expired token")
-	ErrAlreadyVerified     = errors.New("email already verified")
-	ErrTokenNotFound       = errors.New("verification token not found")
-	ErrTokenEmailMismatch  = errors.New("verification token email does not match current email")
-	ErrRateLimited         = errors.New("rate limit exceeded")
-	ErrPasswordMismatch    = errors.New("current password is incorrect")
-	ErrEmailNotConfigured  = errors.New("email service not configured")
-	ErrTokenExpired        = errors.New("token has expired")
+	ErrInvalidCredentials         = errors.New("invalid credentials")
+	ErrUserNotFound               = errors.New("user not found")
+	ErrUsernameTaken              = errors.New("username already taken")
+	ErrEmailTaken                 = errors.New("email already taken")
+	ErrInvalidRoleCode            = errors.New("invalid role code")
+	ErrRoleNotAllowed             = errors.New("role not allowed for self-registration")
+	ErrPasswordTooLong            = errors.New("password exceeds 72 bytes")
+	ErrInvalidRefreshToken        = errors.New("invalid refresh token")
+	ErrSessionNotFound            = errors.New("session not found")
+	ErrInvalidToken               = errors.New("invalid or expired token")
+	ErrAlreadyVerified            = errors.New("email already verified")
+	ErrTokenNotFound              = errors.New("verification token not found")
+	ErrTokenEmailMismatch         = errors.New("verification token email does not match current email")
+	ErrRateLimited                = errors.New("rate limit exceeded")
+	ErrPasswordMismatch           = errors.New("current password is incorrect")
+	ErrEmailNotConfigured         = errors.New("email service not configured")
+	ErrTokenExpired               = errors.New("token has expired")
+	ErrOAuthUserCannotChangeEmail = errors.New("oauth-only users cannot change email")
+	ErrPasswordAlreadySet         = errors.New("password already set")
+	ErrPasswordTooShort           = errors.New("password must be at least 8 characters")
 )
 
 // LoginRequest contains credentials for user login.
@@ -114,6 +131,11 @@ type AuthService interface {
 	ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error
 	ForgotPassword(ctx context.Context, email, origin string) error
 	ResetPassword(ctx context.Context, token, newPassword string) error
+	GoogleAuthURL(state string) (string, error)
+	GoogleCallback(ctx context.Context, code string) (*LoginResponse, error)
+	HasPassword(ctx context.Context, userID int64) (bool, error)
+	GetLinkedProviders(ctx context.Context, userID int64) ([]string, error)
+	SetPassword(ctx context.Context, userID int64, newPassword string) error
 }
 
 type authService struct {
@@ -128,6 +150,8 @@ type authService struct {
 	deniedSelfAssignRoles map[string]bool
 	verifyRateLimitMax    int64
 	verifyRateLimitWindow time.Duration
+	oauthRepo             repository.OAuthAccountRepository
+	googleOAuth           *oauth2.Config
 }
 
 // NewAuthService creates a new AuthService instance.
@@ -135,6 +159,7 @@ func NewAuthService(
 	db *gorm.DB,
 	userRepo repository.UserRepository,
 	verifyRepo repository.VerificationTokenRepository,
+	oauthRepo repository.OAuthAccountRepository,
 	jwtService jwt.Service,
 	jwtSecret string,
 	redisClient *redis.Client,
@@ -143,15 +168,18 @@ func NewAuthService(
 	deniedRoles []string,
 	verifyRateLimitMax int64,
 	verifyRateLimitWindow time.Duration,
+	googleOAuth *oauth2.Config,
 ) AuthService {
 	denied := make(map[string]bool, len(deniedRoles))
 	for _, r := range deniedRoles {
 		denied[r] = true
 	}
+
 	return &authService{
 		db:                    db,
 		userRepo:              userRepo,
 		verifyRepo:            verifyRepo,
+		oauthRepo:             oauthRepo,
 		jwtService:            jwtService,
 		jwtSecret:             jwtSecret,
 		redis:                 redisClient,
@@ -160,8 +188,11 @@ func NewAuthService(
 		deniedSelfAssignRoles: denied,
 		verifyRateLimitMax:    verifyRateLimitMax,
 		verifyRateLimitWindow: verifyRateLimitWindow,
+		googleOAuth:           googleOAuth,
 	}
 }
+
+func ptrString(s string) *string { return &s }
 
 // runInTx executes fn inside a database transaction when a DB handle is
 // available. In test environments where db is nil the callback receives nil
@@ -179,58 +210,14 @@ func (s *authService) Login(ctx context.Context, username, password string, reme
 		return nil, ErrInvalidCredentials
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if user.PasswordHash == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
 
-	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
-	if err != nil {
-		return nil, ErrInvalidCredentials
-	}
-
-	displayName := ""
-	if user.DisplayName != nil {
-		displayName = *user.DisplayName
-	}
-
-	accessToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetAccessExpiry())
-	if err != nil {
-		return nil, err
-	}
-
-	refreshToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetRefreshExpiry())
-	if err != nil {
-		return nil, err
-	}
-
-	refreshExpiry := s.jwtService.GetRefreshExpiry()
-	sessionID := uuid.New().String()
-
-	rememberVal := "0"
-	if rememberMe {
-		rememberVal = "1"
-	}
-	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Set(ctx, fmt.Sprintf("refresh_token:%d:%s", user.ID, sessionID), refreshToken, refreshExpiry)
-		pipe.Set(ctx, fmt.Sprintf("remember_me:%d:%s", user.ID, sessionID), rememberVal, refreshExpiry)
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to store session: %w", err)
-	}
-
-	return &LoginResponse{
-		AccessToken:   accessToken,
-		RefreshToken:  refreshToken,
-		ExpiresIn:     int64(s.jwtService.GetAccessExpiry().Seconds()),
-		UserID:        user.ID,
-		Username:      user.Username,
-		Email:         user.Email,
-		EmailVerified: user.EmailVerified,
-		DisplayName:   displayName,
-		Scopes:        scopes,
-		RememberMe:    rememberMe,
-		SessionID:     sessionID,
-	}, nil
+	return s.issueTokensForUser(ctx, user.ID, rememberMe)
 }
 
 func (s *authService) Logout(ctx context.Context, token, sessionID string) error {
@@ -240,8 +227,8 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 	}
 
 	deleted, err := s.redis.Del(ctx,
-		fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID),
-		fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID),
+		fmt.Sprintf(redisRefreshTokenPrefix, claims.UserID, sessionID),
+		fmt.Sprintf(redisRememberMePrefix, claims.UserID, sessionID),
 	).Result()
 	if err != nil {
 		return fmt.Errorf("failed to invalidate session: %w", err)
@@ -263,7 +250,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		return nil, ErrInvalidRefreshToken
 	}
 
-	storedToken, err := s.redis.Get(ctx, fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID)).Result()
+	storedToken, err := s.redis.Get(ctx, fmt.Sprintf(redisRefreshTokenPrefix, claims.UserID, sessionID)).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, ErrInvalidRefreshToken
 	}
@@ -275,7 +262,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 	}
 
 	rememberMe := false
-	if val, err := s.redis.Get(ctx, fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID)).Result(); errors.Is(err, redis.Nil) {
+	if val, err := s.redis.Get(ctx, fmt.Sprintf(redisRememberMePrefix, claims.UserID, sessionID)).Result(); errors.Is(err, redis.Nil) {
 		// Key not found, keep default false
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to read remember_me preference: %w", err)
@@ -318,8 +305,8 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		rememberVal = "1"
 	}
 	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Set(ctx, fmt.Sprintf("refresh_token:%d:%s", claims.UserID, sessionID), newRefreshToken, refreshExpiry)
-		pipe.Set(ctx, fmt.Sprintf("remember_me:%d:%s", claims.UserID, sessionID), rememberVal, refreshExpiry)
+		pipe.Set(ctx, fmt.Sprintf(redisRefreshTokenPrefix, claims.UserID, sessionID), newRefreshToken, refreshExpiry)
+		pipe.Set(ctx, fmt.Sprintf(redisRememberMePrefix, claims.UserID, sessionID), rememberVal, refreshExpiry)
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("failed to update session: %w", err)
@@ -383,7 +370,7 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 	user := &models.User{
 		Username:     req.Username,
 		Email:        req.Email,
-		PasswordHash: string(hash),
+		PasswordHash: ptrString(string(hash)),
 	}
 
 	if req.RoleCode != "" {
@@ -544,6 +531,9 @@ func (s *authService) UpdateProfile(ctx context.Context, userID int64, req Profi
 	}
 
 	emailChanged := req.Email != nil && *req.Email != user.Email
+	if emailChanged && user.PasswordHash == nil {
+		return nil, ErrOAuthUserCannotChangeEmail
+	}
 	if emailChanged {
 		existing, err := s.userRepo.FindByEmail(ctx, *req.Email)
 		if err == nil && existing != nil {
@@ -621,7 +611,10 @@ func (s *authService) ChangePassword(ctx context.Context, userID int64, req Chan
 		return fmt.Errorf("failed to find user: %w", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+	if user.PasswordHash == nil {
+		return ErrPasswordMismatch
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
 		return ErrPasswordMismatch
 	}
 
@@ -630,7 +623,7 @@ func (s *authService) ChangePassword(ctx context.Context, userID int64, req Chan
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	user.PasswordHash = string(hash)
+	user.PasswordHash = ptrString(string(hash))
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return fmt.Errorf("failed to update password: %w", err)
 	}
@@ -731,7 +724,7 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	user.PasswordHash = string(hash)
+	user.PasswordHash = ptrString(string(hash))
 
 	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
 		userRepo := s.userRepo
@@ -759,6 +752,264 @@ func (s *authService) ResetPassword(ctx context.Context, token, newPassword stri
 	// if session invalidation has issues (e.g. Redis outage)
 	if err := s.invalidateAllSessions(ctx, vt.UserID); err != nil {
 		logger.FromContext(ctx, s.log).Error("failed to invalidate sessions after password reset", "user_id", vt.UserID, "error", err)
+	}
+
+	return nil
+}
+
+func (s *authService) GoogleAuthURL(state string) (string, error) {
+	if s.googleOAuth == nil {
+		return "", ErrGoogleOAuthDisabled
+	}
+	return s.googleOAuth.AuthCodeURL(state, oauth2.AccessTypeOffline), nil
+}
+
+// oauthUsername generates a username from an email address, truncated to fit
+// the 50-char DB limit with a random suffix to avoid collisions.
+func oauthUsername(email string) string {
+	prefix := strings.SplitN(email, "@", 2)[0]
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	suffix := hex.EncodeToString(b) // 8 hex chars
+
+	// 50 max - 1 dash - 8 suffix = 41 max prefix
+	if len(prefix) > 41 {
+		prefix = prefix[:41]
+	}
+	return prefix + "-" + suffix
+}
+
+// googleUserInfo holds the response from Google's userinfo endpoint.
+type googleUserInfo struct {
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"verified_email"`
+	Name          string `json:"name"`
+}
+
+func (s *authService) fetchGoogleUser(ctx context.Context, code string) (*googleUserInfo, error) {
+	token, err := s.googleOAuth.Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange oauth code: %w", err)
+	}
+
+	client := s.googleOAuth.Client(ctx, token)
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch google userinfo: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("google userinfo returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read google userinfo response: %w", err)
+	}
+
+	var info googleUserInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse google userinfo: %w", err)
+	}
+
+	if !info.VerifiedEmail {
+		return nil, fmt.Errorf("google email is not verified")
+	}
+
+	return &info, nil
+}
+
+func (s *authService) GoogleCallback(ctx context.Context, code string) (*LoginResponse, error) {
+	if s.googleOAuth == nil {
+		return nil, ErrGoogleOAuthDisabled
+	}
+
+	info, err := s.fetchGoogleUser(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if oauth account already linked
+	oauthAccount, err := s.oauthRepo.FindByProviderAndID(ctx, "google", info.ID)
+	if err == nil {
+		// Existing linked user — log in directly
+		return s.issueTokensForUser(ctx, oauthAccount.UserID)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to look up oauth account: %w", err)
+	}
+
+	// Not linked — check if a verified user exists with the same email
+	existingUser, err := s.userRepo.FindByEmail(ctx, info.Email)
+	if err == nil && existingUser.EmailVerified {
+		// Link to existing verified user
+		if err := s.oauthRepo.Create(ctx, &models.OAuthAccount{
+			Provider:       "google",
+			ProviderUserID: info.ID,
+			UserID:         existingUser.ID,
+			Email:          info.Email,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to link oauth account: %w", err)
+		}
+		return s.issueTokensForUser(ctx, existingUser.ID)
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to look up user by email: %w", err)
+	}
+
+	// New user — create account + oauth link atomically
+	var userID int64
+	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
+		userRepo := s.userRepo
+		oauthRepo := s.oauthRepo
+		if tx != nil {
+			userRepo = repository.NewUserRepository(tx)
+			oauthRepo = repository.NewOAuthAccountRepository(tx)
+		}
+
+		role, err := userRepo.FindRoleByCode(ctx, "rpg-player")
+		if err != nil {
+			return fmt.Errorf("failed to find rpg-player role: %w", err)
+		}
+		roleID := int(role.ID)
+
+		user := &models.User{
+			Username:      oauthUsername(info.Email),
+			Email:         info.Email,
+			EmailVerified: true,
+			RoleID:        &roleID,
+		}
+		if err := userRepo.Create(ctx, user); err != nil {
+			return fmt.Errorf("failed to create user: %w", err)
+		}
+		userID = user.ID
+
+		return oauthRepo.Create(ctx, &models.OAuthAccount{
+			Provider:       "google",
+			ProviderUserID: info.ID,
+			UserID:         user.ID,
+			Email:          info.Email,
+		})
+	}); err != nil {
+		// Concurrent request may have created the same oauth link — retry lookup
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			oauthAccount, retryErr := s.oauthRepo.FindByProviderAndID(ctx, "google", info.ID)
+			if retryErr != nil {
+				return nil, fmt.Errorf("failed to recover from duplicate: %w", err)
+			}
+			return s.issueTokensForUser(ctx, oauthAccount.UserID)
+		}
+		return nil, err
+	}
+
+	return s.issueTokensForUser(ctx, userID)
+}
+
+func (s *authService) issueTokensForUser(ctx context.Context, userID int64, rememberMe ...bool) (*LoginResponse, error) {
+	remember := len(rememberMe) > 0 && rememberMe[0]
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user: %w", err)
+	}
+
+	scopes, err := s.userRepo.GetUserScopes(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user scopes: %w", err)
+	}
+
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+
+	accessToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetAccessExpiry())
+	if err != nil {
+		return nil, err
+	}
+
+	refreshToken, err := s.signToken(user.ID, user.Username, user.Email, user.EmailVerified, displayName, scopes, s.jwtService.GetRefreshExpiry())
+	if err != nil {
+		return nil, err
+	}
+
+	refreshExpiry := s.jwtService.GetRefreshExpiry()
+	sessionID := uuid.New().String()
+
+	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, fmt.Sprintf(redisRefreshTokenPrefix, user.ID, sessionID), refreshToken, refreshExpiry)
+		rememberVal := "0"
+		if remember {
+			rememberVal = "1"
+		}
+		pipe.Set(ctx, fmt.Sprintf(redisRememberMePrefix, user.ID, sessionID), rememberVal, refreshExpiry)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to store session: %w", err)
+	}
+
+	return &LoginResponse{
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		ExpiresIn:     int64(s.jwtService.GetAccessExpiry().Seconds()),
+		UserID:        user.ID,
+		Username:      user.Username,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		DisplayName:   displayName,
+		Scopes:        scopes,
+		RememberMe:    remember,
+		SessionID:     sessionID,
+	}, nil
+}
+
+func (s *authService) HasPassword(ctx context.Context, userID int64) (bool, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("failed to find user: %w", err)
+	}
+	return user.PasswordHash != nil, nil
+}
+
+func (s *authService) GetLinkedProviders(ctx context.Context, userID int64) ([]string, error) {
+	accounts, err := s.oauthRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get linked providers: %w", err)
+	}
+	providers := make([]string, len(accounts))
+	for i, a := range accounts {
+		providers[i] = a.Provider
+	}
+	return providers, nil
+}
+
+func (s *authService) SetPassword(ctx context.Context, userID int64, newPassword string) error {
+	if len([]byte(newPassword)) < 8 {
+		return ErrPasswordTooShort
+	}
+	if len([]byte(newPassword)) > 72 {
+		return ErrPasswordTooLong
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to find user: %w", err)
+	}
+
+	if user.PasswordHash != nil {
+		return ErrPasswordAlreadySet
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user.PasswordHash = ptrString(string(hash))
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
 	}
 
 	return nil
@@ -826,7 +1077,7 @@ func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) e
 			return fmt.Errorf("failed to delete session key: %w", err)
 		}
 		sessionID := iter.Val()[len(fmt.Sprintf("refresh_token:%d:", userID)):]
-		if err := s.redis.Del(ctx, fmt.Sprintf("remember_me:%d:%s", userID, sessionID)).Err(); err != nil {
+		if err := s.redis.Del(ctx, fmt.Sprintf(redisRememberMePrefix, userID, sessionID)).Err(); err != nil {
 			return fmt.Errorf("failed to delete remember_me key: %w", err)
 		}
 	}

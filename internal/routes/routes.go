@@ -53,6 +53,10 @@ func Setup(router *gin.Engine, authHandler *handlers.AuthHandler, cfg *config.Co
 		v1.POST("/change-password", authHandler.ChangePassword)
 		v1.POST("/forgot-password", authHandler.ForgotPassword)
 		v1.POST("/reset-password", authHandler.ResetPassword)
+		v1.GET("/oauth/google/login", authHandler.GoogleLogin)
+		v1.POST("/oauth/google/callback", authHandler.GoogleCallback)
+		v1.GET("/auth-methods", authHandler.GetAuthMethods)
+		v1.POST("/set-password", authHandler.SetPassword)
 	}
 
 	// Swagger documentation (only if SWAGGER_HOST is configured)

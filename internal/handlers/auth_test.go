@@ -36,6 +36,11 @@ type mockAuthService struct {
 	changePasswordFunc          func(ctx context.Context, userID int64, req service.ChangePasswordRequest) error
 	forgotPasswordFunc          func(ctx context.Context, email, origin string) error
 	resetPasswordFunc           func(ctx context.Context, token, newPassword string) error
+	googleAuthURLFunc           func(state string) (string, error)
+	googleCallbackFunc          func(ctx context.Context, code string) (*service.LoginResponse, error)
+	hasPasswordFunc             func(ctx context.Context, userID int64) (bool, error)
+	getLinkedProvidersFunc      func(ctx context.Context, userID int64) ([]string, error)
+	setPasswordFunc             func(ctx context.Context, userID int64, newPassword string) error
 }
 
 func (m *mockAuthService) ForgotPassword(ctx context.Context, email, origin string) error {
@@ -118,6 +123,41 @@ func (m *mockAuthService) UpdateProfile(ctx context.Context, userID int64, req s
 func (m *mockAuthService) ChangePassword(ctx context.Context, userID int64, req service.ChangePasswordRequest) error {
 	if m.changePasswordFunc != nil {
 		return m.changePasswordFunc(ctx, userID, req)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockAuthService) GoogleAuthURL(state string) (string, error) {
+	if m.googleAuthURLFunc != nil {
+		return m.googleAuthURLFunc(state)
+	}
+	return "", errors.New("not implemented")
+}
+
+func (m *mockAuthService) GoogleCallback(ctx context.Context, code string) (*service.LoginResponse, error) {
+	if m.googleCallbackFunc != nil {
+		return m.googleCallbackFunc(ctx, code)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockAuthService) HasPassword(ctx context.Context, userID int64) (bool, error) {
+	if m.hasPasswordFunc != nil {
+		return m.hasPasswordFunc(ctx, userID)
+	}
+	return false, errors.New("not implemented")
+}
+
+func (m *mockAuthService) GetLinkedProviders(ctx context.Context, userID int64) ([]string, error) {
+	if m.getLinkedProvidersFunc != nil {
+		return m.getLinkedProvidersFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockAuthService) SetPassword(ctx context.Context, userID int64, newPassword string) error {
+	if m.setPasswordFunc != nil {
+		return m.setPasswordFunc(ctx, userID, newPassword)
 	}
 	return errors.New("not implemented")
 }
@@ -218,7 +258,7 @@ func setupTestHandler(mockService *mockAuthService) *AuthHandler {
 		refreshExpiry: 7 * 24 * time.Hour,
 	}
 	actionLogRepo := &mockActionLogRepository{}
-	return NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService, []string{"https://localhost:8543", "https://localhost:8443"}, 3, "1h0m0s")
+	return NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService, nil, []string{"https://localhost:8543", "https://localhost:8443"}, 3, "1h0m0s")
 }
 
 func createTestContext(method, path string, body interface{}) (*httptest.ResponseRecorder, *gin.Context) {
@@ -413,7 +453,7 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 		scopes: map[string]string{"profile": "edit", "projects": "delete"},
 	}
 	actionLogRepo := &mockActionLogRepository{}
-	handler := NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService, []string{"https://localhost:8543"}, 3, "1h0m0s")
+	handler := NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService, nil, []string{"https://localhost:8543"}, 3, "1h0m0s")
 
 	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
 		Username: "admin",
@@ -1369,7 +1409,7 @@ func TestNewAuthHandler(t *testing.T) {
 	cookieHelper := NewCookieHelper(common.CookieConfig{})
 	jwtService := &mockJWTService{}
 
-	handler := NewAuthHandler(mockService, nil, cookieHelper, jwtService, []string{"https://localhost:8543"}, 3, "1h0m0s")
+	handler := NewAuthHandler(mockService, nil, cookieHelper, jwtService, nil, []string{"https://localhost:8543"}, 3, "1h0m0s")
 
 	if handler == nil {
 		t.Fatal("NewAuthHandler returned nil")
