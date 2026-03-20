@@ -1027,6 +1027,10 @@ func (s *authService) SetPassword(ctx context.Context, userID int64, newPassword
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 
+	if err := s.invalidateAllSessions(ctx, userID); err != nil {
+		return fmt.Errorf("failed to invalidate sessions: %w", err)
+	}
+
 	return nil
 }
 
