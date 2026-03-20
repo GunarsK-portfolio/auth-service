@@ -3,6 +3,7 @@ package config
 
 import (
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,10 +43,20 @@ func Load() *Config {
 	}
 
 	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+		redirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+
+		if clientSecret == "" || redirectURL == "" {
+			panic("GOOGLE_CLIENT_ID is set but GOOGLE_CLIENT_SECRET or GOOGLE_REDIRECT_URL is missing")
+		}
+		if u, err := url.Parse(redirectURL); err != nil || u.Scheme == "" || u.Host == "" {
+			panic("GOOGLE_REDIRECT_URL is not a valid URL: " + redirectURL)
+		}
+
 		cfg.GoogleOAuth = &oauth2.Config{
 			ClientID:     clientID,
-			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURL,
 			Scopes:       []string{"openid", "email", "profile"},
 			Endpoint:     google.Endpoint,
 		}

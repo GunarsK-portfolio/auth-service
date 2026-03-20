@@ -19,7 +19,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const oauthStatePrefix = "oauth_state:"
+const (
+	oauthStatePrefix     = "oauth_state:"
+	oauthRateLimitPrefix = "oauth_ratelimit:"
+	oauthRateLimitMax    = 10
+	oauthRateLimitWindow = time.Minute
+)
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
@@ -765,8 +770,9 @@ func extractToken(c *gin.Context) string {
 
 // GoogleCallbackRequest is the request body for the Google OAuth callback.
 type GoogleCallbackRequest struct {
-	Code  string `json:"code" binding:"required"`
-	State string `json:"state" binding:"required"`
+	Code       string `json:"code" binding:"required"`
+	State      string `json:"state" binding:"required"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 // SetPasswordRequest is the request body for setting a password.
@@ -781,8 +787,29 @@ type AuthMethodsResponse struct {
 	Providers   []string `json:"providers"`
 }
 
+func (h *AuthHandler) checkOAuthRateLimit(c *gin.Context) bool {
+	key := oauthRateLimitPrefix + c.ClientIP()
+	count, err := h.redis.Incr(c.Request.Context(), key).Result()
+	if err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to check rate limit")
+		return false
+	}
+	if count == 1 {
+		h.redis.Expire(c.Request.Context(), key, oauthRateLimitWindow)
+	}
+	if count > oauthRateLimitMax {
+		commonHandlers.RespondError(c, http.StatusTooManyRequests, "too many oauth requests, try again later")
+		return false
+	}
+	return true
+}
+
 // GoogleLogin returns the Google OAuth consent URL.
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	if !h.checkOAuthRateLimit(c) {
+		return
+	}
+
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to generate state")
@@ -810,6 +837,10 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 
 // GoogleCallback exchanges the authorization code for tokens and logs the user in.
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	if !h.checkOAuthRateLimit(c) {
+		return
+	}
+
 	var req GoogleCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
@@ -828,7 +859,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	response, err := h.authService.GoogleCallback(c.Request.Context(), req.Code)
+	response, err := h.authService.GoogleCallback(c.Request.Context(), req.Code, req.RememberMe)
 	if err != nil {
 		if errors.Is(err, service.ErrGoogleOAuthDisabled) {
 			commonHandlers.RespondError(c, http.StatusNotImplemented, "google oauth is not configured")
@@ -844,9 +875,9 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		response.RefreshToken,
 		h.jwtService.GetAccessExpiry(),
 		h.jwtService.GetRefreshExpiry(),
-		false,
+		req.RememberMe,
 	)
-	h.cookieHelper.SetSessionCookie(c, response.SessionID, false, h.jwtService.GetRefreshExpiry())
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, req.RememberMe, h.jwtService.GetRefreshExpiry())
 
 	c.JSON(http.StatusOK, LoginResponse{
 		Success:       true,

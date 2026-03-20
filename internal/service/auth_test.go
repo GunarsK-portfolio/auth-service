@@ -2722,7 +2722,7 @@ func TestGoogleCallback_Disabled(t *testing.T) {
 	service, mr, _, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	_, err := service.GoogleCallback(context.Background(), "somecode")
+	_, err := service.GoogleCallback(context.Background(), "somecode", false)
 	if !errors.Is(err, ErrGoogleOAuthDisabled) {
 		t.Errorf("GoogleCallback() error = %v, want %v", err, ErrGoogleOAuthDisabled)
 	}

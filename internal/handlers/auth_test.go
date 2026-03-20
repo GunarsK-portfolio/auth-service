@@ -134,7 +134,7 @@ func (m *mockAuthService) GoogleAuthURL(state string) (string, error) {
 	return "", errors.New("not implemented")
 }
 
-func (m *mockAuthService) GoogleCallback(ctx context.Context, code string) (*service.LoginResponse, error) {
+func (m *mockAuthService) GoogleCallback(ctx context.Context, code string, rememberMe bool) (*service.LoginResponse, error) {
 	if m.googleCallbackFunc != nil {
 		return m.googleCallbackFunc(ctx, code)
 	}

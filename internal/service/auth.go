@@ -132,7 +132,7 @@ type AuthService interface {
 	ForgotPassword(ctx context.Context, email, origin string) error
 	ResetPassword(ctx context.Context, token, newPassword string) error
 	GoogleAuthURL(state string) (string, error)
-	GoogleCallback(ctx context.Context, code string) (*LoginResponse, error)
+	GoogleCallback(ctx context.Context, code string, rememberMe bool) (*LoginResponse, error)
 	HasPassword(ctx context.Context, userID int64) (bool, error)
 	GetLinkedProviders(ctx context.Context, userID int64) ([]string, error)
 	SetPassword(ctx context.Context, userID int64, newPassword string) error
@@ -779,11 +779,11 @@ func oauthUsername(email string) string {
 	return prefix + "-" + suffix
 }
 
-// googleUserInfo holds the response from Google's userinfo endpoint.
+// googleUserInfo holds the response from Google's OIDC userinfo endpoint.
 type googleUserInfo struct {
-	ID            string `json:"id"`
+	ID            string `json:"sub"`
 	Email         string `json:"email"`
-	VerifiedEmail bool   `json:"verified_email"`
+	VerifiedEmail bool   `json:"email_verified"`
 	Name          string `json:"name"`
 }
 
@@ -793,8 +793,13 @@ func (s *authService) fetchGoogleUser(ctx context.Context, code string) (*google
 		return nil, fmt.Errorf("failed to exchange oauth code: %w", err)
 	}
 
-	client := s.googleOAuth.Client(ctx, token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openidconnect.googleapis.com/v1/userinfo", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create userinfo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch google userinfo: %w", err)
 	}
@@ -821,7 +826,7 @@ func (s *authService) fetchGoogleUser(ctx context.Context, code string) (*google
 	return &info, nil
 }
 
-func (s *authService) GoogleCallback(ctx context.Context, code string) (*LoginResponse, error) {
+func (s *authService) GoogleCallback(ctx context.Context, code string, rememberMe bool) (*LoginResponse, error) {
 	if s.googleOAuth == nil {
 		return nil, ErrGoogleOAuthDisabled
 	}
@@ -835,7 +840,7 @@ func (s *authService) GoogleCallback(ctx context.Context, code string) (*LoginRe
 	oauthAccount, err := s.oauthRepo.FindByProviderAndID(ctx, "google", info.ID)
 	if err == nil {
 		// Existing linked user — log in directly
-		return s.issueTokensForUser(ctx, oauthAccount.UserID)
+		return s.issueTokensForUser(ctx, oauthAccount.UserID, rememberMe)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to look up oauth account: %w", err)
@@ -853,7 +858,7 @@ func (s *authService) GoogleCallback(ctx context.Context, code string) (*LoginRe
 		}); err != nil {
 			return nil, fmt.Errorf("failed to link oauth account: %w", err)
 		}
-		return s.issueTokensForUser(ctx, existingUser.ID)
+		return s.issueTokensForUser(ctx, existingUser.ID, rememberMe)
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to look up user by email: %w", err)
@@ -900,12 +905,12 @@ func (s *authService) GoogleCallback(ctx context.Context, code string) (*LoginRe
 			if retryErr != nil {
 				return nil, fmt.Errorf("failed to recover from duplicate: %w", err)
 			}
-			return s.issueTokensForUser(ctx, oauthAccount.UserID)
+			return s.issueTokensForUser(ctx, oauthAccount.UserID, rememberMe)
 		}
 		return nil, err
 	}
 
-	return s.issueTokensForUser(ctx, userID)
+	return s.issueTokensForUser(ctx, userID, rememberMe)
 }
 
 func (s *authService) issueTokensForUser(ctx context.Context, userID int64, rememberMe ...bool) (*LoginResponse, error) {
