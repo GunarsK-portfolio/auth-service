@@ -37,7 +37,7 @@ type mockAuthService struct {
 	forgotPasswordFunc          func(ctx context.Context, email, origin string) error
 	resetPasswordFunc           func(ctx context.Context, token, newPassword string) error
 	googleAuthURLFunc           func(state string) (string, error)
-	googleCallbackFunc          func(ctx context.Context, code string) (*service.LoginResponse, error)
+	googleCallbackFunc          func(ctx context.Context, code string, rememberMe bool) (*service.LoginResponse, error)
 	hasPasswordFunc             func(ctx context.Context, userID int64) (bool, error)
 	getLinkedProvidersFunc      func(ctx context.Context, userID int64) ([]string, error)
 	setPasswordFunc             func(ctx context.Context, userID int64, newPassword string) error
@@ -136,7 +136,7 @@ func (m *mockAuthService) GoogleAuthURL(state string) (string, error) {
 
 func (m *mockAuthService) GoogleCallback(ctx context.Context, code string, rememberMe bool) (*service.LoginResponse, error) {
 	if m.googleCallbackFunc != nil {
-		return m.googleCallbackFunc(ctx, code)
+		return m.googleCallbackFunc(ctx, code, rememberMe)
 	}
 	return nil, errors.New("not implemented")
 }

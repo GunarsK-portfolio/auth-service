@@ -788,6 +788,9 @@ type googleUserInfo struct {
 }
 
 func (s *authService) fetchGoogleUser(ctx context.Context, code string) (*googleUserInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	token, err := s.googleOAuth.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange oauth code: %w", err)

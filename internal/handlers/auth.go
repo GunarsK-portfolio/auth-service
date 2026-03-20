@@ -795,7 +795,11 @@ func (h *AuthHandler) checkOAuthRateLimit(c *gin.Context) bool {
 		return false
 	}
 	if count == 1 {
-		h.redis.Expire(c.Request.Context(), key, oauthRateLimitWindow)
+		if err := h.redis.Expire(c.Request.Context(), key, oauthRateLimitWindow).Err(); err != nil {
+			h.redis.Del(c.Request.Context(), key)
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to set rate limit expiry")
+			return false
+		}
 	}
 	if count > oauthRateLimitMax {
 		commonHandlers.RespondError(c, http.StatusTooManyRequests, "too many oauth requests, try again later")
