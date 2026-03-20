@@ -2,10 +2,13 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/GunarsK-portfolio/auth-service/internal/service"
 	"github.com/GunarsK-portfolio/portfolio-common/audit"
@@ -13,6 +16,14 @@ import (
 	"github.com/GunarsK-portfolio/portfolio-common/jwt"
 	"github.com/GunarsK-portfolio/portfolio-common/repository"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	oauthStatePrefix     = "oauth_state:"
+	oauthRateLimitPrefix = "oauth_ratelimit:"
+	oauthRateLimitMax    = 10
+	oauthRateLimitWindow = time.Minute
 )
 
 // AuthHandler handles authentication HTTP requests.
@@ -21,6 +32,7 @@ type AuthHandler struct {
 	actionLogRepo      repository.ActionLogRepository
 	cookieHelper       *CookieHelper
 	jwtService         jwt.Service
+	redis              *redis.Client
 	allowedOrigins     map[string]bool
 	verifyRateLimitMsg string
 }
@@ -31,6 +43,7 @@ func NewAuthHandler(
 	actionLogRepo repository.ActionLogRepository,
 	cookieHelper *CookieHelper,
 	jwtService jwt.Service,
+	redisClient *redis.Client,
 	allowedOrigins []string,
 	verifyRateLimitMax int64,
 	verifyRateLimitWindow string,
@@ -44,6 +57,7 @@ func NewAuthHandler(
 		actionLogRepo:      actionLogRepo,
 		cookieHelper:       cookieHelper,
 		jwtService:         jwtService,
+		redis:              redisClient,
 		allowedOrigins:     origins,
 		verifyRateLimitMsg: fmt.Sprintf("maximum %d verification emails per %s, please try again later", verifyRateLimitMax, verifyRateLimitWindow),
 	}
@@ -587,6 +601,8 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		switch {
 		case errors.Is(err, service.ErrEmailTaken):
 			commonHandlers.RespondError(c, http.StatusConflict, "email already in use")
+		case errors.Is(err, service.ErrOAuthUserCannotChangeEmail):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "oauth-only users cannot change email, set a password first")
 		case errors.Is(err, service.ErrUserNotFound):
 			commonHandlers.RespondError(c, http.StatusUnauthorized, "user not found")
 		default:
@@ -750,4 +766,191 @@ func extractToken(c *gin.Context) string {
 		return parts[1]
 	}
 	return ""
+}
+
+// GoogleCallbackRequest is the request body for the Google OAuth callback.
+type GoogleCallbackRequest struct {
+	Code       string `json:"code" binding:"required"`
+	State      string `json:"state" binding:"required"`
+	RememberMe bool   `json:"remember_me"`
+}
+
+// SetPasswordRequest is the request body for setting a password.
+type SetPasswordRequest struct {
+	Password        string `json:"password" binding:"required,min=8,max=72"`
+	ConfirmPassword string `json:"confirm_password" binding:"required"`
+}
+
+// AuthMethodsResponse describes the authentication methods available to a user.
+type AuthMethodsResponse struct {
+	HasPassword bool     `json:"has_password"`
+	Providers   []string `json:"providers"`
+}
+
+func (h *AuthHandler) checkOAuthRateLimit(c *gin.Context) bool {
+	key := oauthRateLimitPrefix + c.ClientIP()
+	count, err := h.redis.Incr(c.Request.Context(), key).Result()
+	if err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to check rate limit")
+		return false
+	}
+	if count == 1 {
+		if err := h.redis.Expire(c.Request.Context(), key, oauthRateLimitWindow).Err(); err != nil {
+			h.redis.Del(c.Request.Context(), key)
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to set rate limit expiry")
+			return false
+		}
+	}
+	if count > oauthRateLimitMax {
+		commonHandlers.RespondError(c, http.StatusTooManyRequests, "too many oauth requests, try again later")
+		return false
+	}
+	return true
+}
+
+// GoogleLogin returns the Google OAuth consent URL.
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	if !h.checkOAuthRateLimit(c) {
+		return
+	}
+
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to generate state")
+		return
+	}
+	state := hex.EncodeToString(b)
+
+	if err := h.redis.Set(c.Request.Context(), oauthStatePrefix+state, "1", 5*time.Minute).Err(); err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to store oauth state")
+		return
+	}
+
+	url, err := h.authService.GoogleAuthURL(state)
+	if err != nil {
+		if errors.Is(err, service.ErrGoogleOAuthDisabled) {
+			commonHandlers.RespondError(c, http.StatusNotImplemented, "google oauth is not configured")
+			return
+		}
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to generate auth url")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// GoogleCallback exchanges the authorization code for tokens and logs the user in.
+func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	if !h.checkOAuthRateLimit(c) {
+		return
+	}
+
+	var req GoogleCallbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Validate and consume state (one-time use)
+	key := oauthStatePrefix + req.State
+	deleted, err := h.redis.Del(c.Request.Context(), key).Result()
+	if err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to validate oauth state")
+		return
+	}
+	if deleted == 0 {
+		commonHandlers.RespondError(c, http.StatusBadRequest, "invalid or expired oauth state")
+		return
+	}
+
+	response, err := h.authService.GoogleCallback(c.Request.Context(), req.Code, req.RememberMe)
+	if err != nil {
+		if errors.Is(err, service.ErrGoogleOAuthDisabled) {
+			commonHandlers.RespondError(c, http.StatusNotImplemented, "google oauth is not configured")
+			return
+		}
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "google oauth callback failed")
+		return
+	}
+
+	h.cookieHelper.SetAuthCookies(
+		c,
+		response.AccessToken,
+		response.RefreshToken,
+		h.jwtService.GetAccessExpiry(),
+		h.jwtService.GetRefreshExpiry(),
+		req.RememberMe,
+	)
+	h.cookieHelper.SetSessionCookie(c, response.SessionID, req.RememberMe, h.jwtService.GetRefreshExpiry())
+
+	c.JSON(http.StatusOK, LoginResponse{
+		Success:       true,
+		ExpiresIn:     response.ExpiresIn,
+		UserID:        response.UserID,
+		Username:      response.Username,
+		Email:         response.Email,
+		EmailVerified: response.EmailVerified,
+		DisplayName:   response.DisplayName,
+		Scopes:        response.Scopes,
+	})
+}
+
+// GetAuthMethods returns the authentication methods available to the current user.
+func (h *AuthHandler) GetAuthMethods(c *gin.Context) {
+	claims, ok := h.authenticateRequest(c)
+	if !ok {
+		return
+	}
+
+	hasPassword, err := h.authService.HasPassword(c.Request.Context(), claims.UserID)
+	if err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to check auth methods")
+		return
+	}
+
+	providers, err := h.authService.GetLinkedProviders(c.Request.Context(), claims.UserID)
+	if err != nil {
+		commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to get linked providers")
+		return
+	}
+
+	c.JSON(http.StatusOK, AuthMethodsResponse{
+		HasPassword: hasPassword,
+		Providers:   providers,
+	})
+}
+
+// SetPassword sets a password for users who don't have one (OAuth-only users).
+func (h *AuthHandler) SetPassword(c *gin.Context) {
+	claims, ok := h.authenticateRequest(c)
+	if !ok {
+		return
+	}
+
+	var req SetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		commonHandlers.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.Password != req.ConfirmPassword {
+		commonHandlers.RespondError(c, http.StatusBadRequest, "passwords do not match")
+		return
+	}
+
+	if err := h.authService.SetPassword(c.Request.Context(), claims.UserID, req.Password); err != nil {
+		switch {
+		case errors.Is(err, service.ErrPasswordAlreadySet):
+			commonHandlers.RespondError(c, http.StatusConflict, "password already set, use change-password instead")
+		case errors.Is(err, service.ErrPasswordTooShort):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "password must be at least 8 characters")
+		case errors.Is(err, service.ErrPasswordTooLong):
+			commonHandlers.RespondError(c, http.StatusBadRequest, "password exceeds maximum length")
+		default:
+			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "failed to set password")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "password set successfully"})
 }

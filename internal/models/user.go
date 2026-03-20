@@ -24,10 +24,9 @@ type User struct {
 	ID            int64     `json:"id" gorm:"primaryKey"`
 	Username      string    `json:"username" gorm:"uniqueIndex;not null"`
 	Email         string    `json:"email" gorm:"uniqueIndex;not null"`
-	PasswordHash  string    `json:"-" gorm:"not null"`
+	PasswordHash  *string   `json:"-"`
 	EmailVerified bool      `json:"email_verified" gorm:"not null;default:false"`
 	DisplayName   *string   `json:"display_name" gorm:"column:display_name"`
-	RoleID        *int      `json:"role_id" gorm:"column:role_id"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -48,6 +47,21 @@ type VerificationToken struct {
 // TableName returns the database table name for the VerificationToken model.
 func (VerificationToken) TableName() string {
 	return "verification_tokens"
+}
+
+// OAuthAccount represents an external OAuth provider identity linked to a user.
+type OAuthAccount struct {
+	ID             int64     `json:"id" gorm:"primaryKey;autoIncrement"`
+	Provider       string    `json:"provider" gorm:"not null"`
+	ProviderUserID string    `json:"provider_user_id" gorm:"not null"`
+	UserID         int64     `json:"user_id" gorm:"not null"`
+	Email          string    `json:"email" gorm:"not null"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// TableName returns the database table name for the OAuthAccount model.
+func (OAuthAccount) TableName() string {
+	return "auth.oauth_accounts"
 }
 
 // TableName returns the database table name for the User model.

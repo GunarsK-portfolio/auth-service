@@ -3,12 +3,15 @@ package config
 
 import (
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	common "github.com/GunarsK-portfolio/portfolio-common/config"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // Config holds all configuration for the auth service.
@@ -22,6 +25,7 @@ type Config struct {
 	DeniedSelfAssignRoles []string
 	VerifyRateLimitMax    int64
 	VerifyRateLimitWindow time.Duration
+	GoogleOAuth           *oauth2.Config
 }
 
 // Load reads configuration from environment variables.
@@ -36,6 +40,26 @@ func Load() *Config {
 		DeniedSelfAssignRoles: parseDeniedRoles(),
 		VerifyRateLimitMax:    parseIntOrDefault("VERIFY_RATE_LIMIT_MAX", 3),
 		VerifyRateLimitWindow: parseDurationOrDefault("VERIFY_RATE_LIMIT_WINDOW", time.Hour),
+	}
+
+	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+		redirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+
+		if clientSecret == "" || redirectURL == "" {
+			panic("GOOGLE_CLIENT_ID is set but GOOGLE_CLIENT_SECRET or GOOGLE_REDIRECT_URL is missing")
+		}
+		if u, err := url.Parse(redirectURL); err != nil || u.Scheme == "" || u.Host == "" {
+			panic("GOOGLE_REDIRECT_URL is not a valid URL: " + redirectURL)
+		}
+
+		cfg.GoogleOAuth = &oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURL,
+			Scopes:       []string{"openid", "email", "profile"},
+			Endpoint:     google.Endpoint,
+		}
 	}
 
 	// Defense-in-depth: Explicitly verify JWT secret is configured
