@@ -90,6 +90,7 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	verifyRepo := repository.NewVerificationTokenRepository(db)
 	oauthRepo := repository.NewOAuthAccountRepository(db)
+	userRoleRepo := repository.NewUserRoleRepository(db)
 	actionLogRepo := commonrepo.NewActionLogRepository(db)
 
 	// Initialize services
@@ -118,7 +119,7 @@ func main() {
 
 	//nolint:staticcheck // Embedded field name required for clarity
 	authService := service.NewAuthService(
-		db, userRepo, verifyRepo, oauthRepo, jwtService, cfg.JWTConfig.Secret,
+		db, userRepo, verifyRepo, oauthRepo, userRoleRepo, jwtService, cfg.JWTConfig.Secret,
 		redisClient, emailClient, appLogger, cfg.DeniedSelfAssignRoles,
 		cfg.VerifyRateLimitMax, cfg.VerifyRateLimitWindow,
 		cfg.GoogleOAuth,

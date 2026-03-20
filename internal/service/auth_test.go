@@ -71,6 +71,21 @@ func (m *mockOAuthRepo) Create(ctx context.Context, account *models.OAuthAccount
 }
 
 // =============================================================================
+// Mock UserRoleRepository
+// =============================================================================
+
+type mockUserRoleRepo struct {
+	assignRoleFunc func(ctx context.Context, userID int64, roleCode string) error
+}
+
+func (m *mockUserRoleRepo) AssignRole(ctx context.Context, userID int64, roleCode string) error {
+	if m.assignRoleFunc != nil {
+		return m.assignRoleFunc(ctx, userID, roleCode)
+	}
+	return nil
+}
+
+// =============================================================================
 // Mock VerificationTokenRepository
 // =============================================================================
 
@@ -235,8 +250,10 @@ func setupTestAuthService(t *testing.T) (*authService, *miniredis.Miniredis, *mo
 		return nil, nil
 	}
 
+	mockUserRole := &mockUserRoleRepo{}
+
 	svc := NewAuthService(
-		nil, mockRepo, mockVerify, nil, jwtService, testSecret,
+		nil, mockRepo, mockVerify, nil, mockUserRole, jwtService, testSecret,
 		redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
 		nil,
 	).(*authService)
@@ -264,7 +281,7 @@ func TestNewAuthService(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	svc := NewAuthService(nil, mockRepo, mockVerify, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour, nil)
+	svc := NewAuthService(nil, mockRepo, mockVerify, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour, nil)
 
 	if svc == nil {
 		t.Error("NewAuthService() should return non-nil service")
@@ -279,7 +296,7 @@ func TestAuthServiceInterfaceCompliance(t *testing.T) {
 	mockRepo := &mockUserRepository{}
 	mockVerify := &mockVerifyRepo{}
 
-	var _ = NewAuthService(nil, mockRepo, mockVerify, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour, nil)
+	var _ = NewAuthService(nil, mockRepo, mockVerify, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin"}, 3, time.Hour, nil)
 }
 
 // =============================================================================
@@ -972,7 +989,7 @@ func TestLogout_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, shortExpiry, testRefreshExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1114,7 +1131,7 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 	shortExpiry := 1 * time.Second
 	jwtService, _ := jwt.NewService(testSecret, testAccessExpiry, shortExpiry)
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
 
 	// Generate refresh token
 	token, err := jwtService.GenerateRefreshToken(1, "testuser", nil)
@@ -1256,7 +1273,7 @@ func TestAuthValidateToken_ExpiredToken(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1286,7 +1303,7 @@ func TestValidateToken_AlmostExpired(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	mockRepo := &mockUserRepository{}
-	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
+	service := NewAuthService(nil, mockRepo, &mockVerifyRepo{}, nil, nil, jwtService, testSecret, redisClient, nil, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour, nil).(*authService)
 
 	// Generate token
 	token, err := jwtService.GenerateAccessToken(1, "testuser", nil)
@@ -1443,14 +1460,10 @@ func TestRegister_Success(t *testing.T) {
 		t.Error("Register() should store a valid bcrypt hash")
 	}
 
-	// Verify no role was assigned
-	if createdUser.RoleID != nil {
-		t.Error("Register() should not assign a role when role_code is empty")
-	}
 }
 
 func TestRegister_Success_WithRoleCode(t *testing.T) {
-	service, mr, mockRepo, _ := setupTestAuthService(t)
+	svc, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
 	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
@@ -1465,14 +1478,20 @@ func TestRegister_Success_WithRoleCode(t *testing.T) {
 		return &models.Role{ID: 2, Code: "read-only", Name: "Read Only"}, nil
 	}
 
-	var createdUser *models.User
 	mockRepo.createFunc = func(ctx context.Context, user *models.User) error {
-		createdUser = user
 		user.ID = 4
 		return nil
 	}
 
-	result, err := service.Register(context.Background(), RegisterRequest{
+	var assignedRole string
+	svc.userRoleRepo = &mockUserRoleRepo{
+		assignRoleFunc: func(ctx context.Context, userID int64, roleCode string) error {
+			assignedRole = roleCode
+			return nil
+		},
+	}
+
+	result, err := svc.Register(context.Background(), RegisterRequest{
 		Username: "viewer",
 		Email:    "viewer@example.com",
 		Password: "password123",
@@ -1487,12 +1506,8 @@ func TestRegister_Success_WithRoleCode(t *testing.T) {
 		t.Errorf("Register() UserID = %d, want 4", result.UserID)
 	}
 
-	if createdUser.RoleID == nil {
-		t.Fatal("Register() should assign role when role_code is provided")
-	}
-
-	if *createdUser.RoleID != 2 {
-		t.Errorf("Register() RoleID = %d, want 2", *createdUser.RoleID)
+	if assignedRole != "read-only" {
+		t.Errorf("Register() assigned role = %s, want read-only", assignedRole)
 	}
 }
 
@@ -2207,7 +2222,7 @@ func setupTestAuthServiceWithEmail(t *testing.T) (*authService, *miniredis.Minir
 	}
 
 	svc := NewAuthService(
-		nil, mockRepo, mockVerify, nil, jwtService, testSecret,
+		nil, mockRepo, mockVerify, nil, nil, jwtService, testSecret,
 		redisClient, mockEmail, slog.Default(), []string{"admin", "rpg-admin"}, 3, time.Hour,
 		nil,
 	).(*authService)

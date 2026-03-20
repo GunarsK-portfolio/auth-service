@@ -151,6 +151,7 @@ type authService struct {
 	verifyRateLimitMax    int64
 	verifyRateLimitWindow time.Duration
 	oauthRepo             repository.OAuthAccountRepository
+	userRoleRepo          repository.UserRoleRepository
 	googleOAuth           *oauth2.Config
 }
 
@@ -160,6 +161,7 @@ func NewAuthService(
 	userRepo repository.UserRepository,
 	verifyRepo repository.VerificationTokenRepository,
 	oauthRepo repository.OAuthAccountRepository,
+	userRoleRepo repository.UserRoleRepository,
 	jwtService jwt.Service,
 	jwtSecret string,
 	redisClient *redis.Client,
@@ -180,6 +182,7 @@ func NewAuthService(
 		userRepo:              userRepo,
 		verifyRepo:            verifyRepo,
 		oauthRepo:             oauthRepo,
+		userRoleRepo:          userRoleRepo,
 		jwtService:            jwtService,
 		jwtSecret:             jwtSecret,
 		redis:                 redisClient,
@@ -377,12 +380,9 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 		if s.deniedSelfAssignRoles[req.RoleCode] {
 			return nil, ErrRoleNotAllowed
 		}
-		role, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode)
-		if err != nil {
+		if _, err := s.userRepo.FindRoleByCode(ctx, req.RoleCode); err != nil {
 			return nil, ErrInvalidRoleCode
 		}
-		roleID := int(role.ID)
-		user.RoleID = &roleID
 	}
 
 	token, err := generateVerificationToken()
@@ -393,13 +393,21 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*Regis
 	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
 		userRepo := s.userRepo
 		verifyRepo := s.verifyRepo
+		userRoleRepo := s.userRoleRepo
 		if tx != nil {
 			userRepo = repository.NewUserRepository(tx)
 			verifyRepo = repository.NewVerificationTokenRepository(tx)
+			userRoleRepo = repository.NewUserRoleRepository(tx)
 		}
 
 		if err := userRepo.Create(ctx, user); err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
+		}
+
+		if req.RoleCode != "" {
+			if err := userRoleRepo.AssignRole(ctx, user.ID, req.RoleCode); err != nil {
+				return fmt.Errorf("failed to assign role: %w", err)
+			}
 		}
 
 		vt := &models.VerificationToken{
@@ -867,32 +875,31 @@ func (s *authService) GoogleCallback(ctx context.Context, code string, rememberM
 		return nil, fmt.Errorf("failed to look up user by email: %w", err)
 	}
 
-	// New user — create account + oauth link atomically
+	// New user — create account + oauth link + role atomically
 	var userID int64
 	if err := s.runInTx(ctx, func(tx *gorm.DB) error {
 		userRepo := s.userRepo
 		oauthRepo := s.oauthRepo
+		userRoleRepo := s.userRoleRepo
 		if tx != nil {
 			userRepo = repository.NewUserRepository(tx)
 			oauthRepo = repository.NewOAuthAccountRepository(tx)
+			userRoleRepo = repository.NewUserRoleRepository(tx)
 		}
-
-		role, err := userRepo.FindRoleByCode(ctx, "rpg-player")
-		if err != nil {
-			return fmt.Errorf("failed to find rpg-player role: %w", err)
-		}
-		roleID := int(role.ID)
 
 		user := &models.User{
 			Username:      oauthUsername(info.Email),
 			Email:         info.Email,
 			EmailVerified: true,
-			RoleID:        &roleID,
 		}
 		if err := userRepo.Create(ctx, user); err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
 		}
 		userID = user.ID
+
+		if err := userRoleRepo.AssignRole(ctx, userID, "rpg-player"); err != nil {
+			return fmt.Errorf("failed to assign role: %w", err)
+		}
 
 		return oauthRepo.Create(ctx, &models.OAuthAccount{
 			Provider:       "google",

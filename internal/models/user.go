@@ -27,7 +27,6 @@ type User struct {
 	PasswordHash  *string   `json:"-"`
 	EmailVerified bool      `json:"email_verified" gorm:"not null;default:false"`
 	DisplayName   *string   `json:"display_name" gorm:"column:display_name"`
-	RoleID        *int      `json:"role_id" gorm:"column:role_id"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

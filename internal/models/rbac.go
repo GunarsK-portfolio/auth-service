@@ -48,3 +48,16 @@ type ScopeResult struct {
 	ResourceCode    string
 	PermissionLevel string
 }
+
+// UserRole maps a user to an assigned role.
+type UserRole struct {
+	ID        int64     `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserID    int64     `json:"user_id" gorm:"not null"`
+	RoleID    int64     `json:"role_id" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TableName returns the database table name for the UserRole model.
+func (UserRole) TableName() string {
+	return "auth.user_roles"
+}

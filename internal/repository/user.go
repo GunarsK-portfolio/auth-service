@@ -70,30 +70,33 @@ func (r *userRepository) Update(ctx context.Context, user *models.User) error {
 	return nil
 }
 
+var levelValues = map[string]int{"none": 0, "read": 1, "edit": 2, "delete": 3}
+
 func (r *userRepository) GetUserScopes(ctx context.Context, userID int64) (map[string]string, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).First(&user, userID).Error; err != nil {
-		return nil, fmt.Errorf("failed to find user %d: %w", userID, err)
-	}
-
-	if user.RoleID == nil {
-		return make(map[string]string), nil
-	}
-
 	var results []models.ScopeResult
 	err := r.db.WithContext(ctx).
-		Table("role_scopes").
+		Table("user_roles").
 		Select("resources.code as resource_code, role_scopes.permission_level").
+		Joins("JOIN role_scopes ON role_scopes.role_id = user_roles.role_id").
 		Joins("JOIN resources ON resources.id = role_scopes.resource_id").
-		Where("role_scopes.role_id = ?", *user.RoleID).
+		Where("user_roles.user_id = ?", userID).
 		Scan(&results).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scopes for user %d: %w", userID, err)
 	}
 
-	scopes := make(map[string]string, len(results))
+	scopes := make(map[string]string)
 	for _, result := range results {
-		scopes[result.ResourceCode] = result.PermissionLevel
+		existing, ok := scopes[result.ResourceCode]
+		if !ok || levelValues[result.PermissionLevel] > levelValues[existing] {
+			scopes[result.ResourceCode] = result.PermissionLevel
+		}
+	}
+
+	for k, v := range scopes {
+		if v == "none" {
+			delete(scopes, k)
+		}
 	}
 
 	return scopes, nil
