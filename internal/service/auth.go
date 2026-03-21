@@ -33,8 +33,10 @@ import (
 var ErrGoogleOAuthDisabled = errors.New("google oauth is not configured")
 
 const (
-	redisRefreshTokenPrefix = "refresh_token:%d:%s"
-	redisRememberMePrefix   = "remember_me:%d:%s"
+	redisRefreshTokenPrefix      = "refresh_token:%d:%s"
+	redisRefreshTokenGracePrefix = "refresh_token_grace:%d:%s"
+	redisRememberMePrefix        = "remember_me:%d:%s"
+	refreshGracePeriod           = 60 * time.Second
 )
 
 var (
@@ -231,6 +233,7 @@ func (s *authService) Logout(ctx context.Context, token, sessionID string) error
 
 	deleted, err := s.redis.Del(ctx,
 		fmt.Sprintf(redisRefreshTokenPrefix, claims.UserID, sessionID),
+		fmt.Sprintf(redisRefreshTokenGracePrefix, claims.UserID, sessionID),
 		fmt.Sprintf(redisRememberMePrefix, claims.UserID, sessionID),
 	).Result()
 	if err != nil {
@@ -261,7 +264,10 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		return nil, fmt.Errorf("failed to read refresh token: %w", err)
 	}
 	if storedToken != refreshToken {
-		return nil, ErrInvalidRefreshToken
+		graceToken, graceErr := s.redis.Get(ctx, fmt.Sprintf(redisRefreshTokenGracePrefix, claims.UserID, sessionID)).Result()
+		if graceErr != nil || graceToken != refreshToken {
+			return nil, ErrInvalidRefreshToken
+		}
 	}
 
 	rememberMe := false
@@ -308,6 +314,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken, sessionID 
 		rememberVal = "1"
 	}
 	if _, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, fmt.Sprintf(redisRefreshTokenGracePrefix, claims.UserID, sessionID), storedToken, refreshGracePeriod)
 		pipe.Set(ctx, fmt.Sprintf(redisRefreshTokenPrefix, claims.UserID, sessionID), newRefreshToken, refreshExpiry)
 		pipe.Set(ctx, fmt.Sprintf(redisRememberMePrefix, claims.UserID, sessionID), rememberVal, refreshExpiry)
 		return nil
@@ -1096,6 +1103,9 @@ func (s *authService) invalidateAllSessions(ctx context.Context, userID int64) e
 			return fmt.Errorf("failed to delete session key: %w", err)
 		}
 		sessionID := iter.Val()[len(fmt.Sprintf("refresh_token:%d:", userID)):]
+		if err := s.redis.Del(ctx, fmt.Sprintf(redisRefreshTokenGracePrefix, userID, sessionID)).Err(); err != nil {
+			return fmt.Errorf("failed to delete grace key: %w", err)
+		}
 		if err := s.redis.Del(ctx, fmt.Sprintf(redisRememberMePrefix, userID, sessionID)).Err(); err != nil {
 			return fmt.Errorf("failed to delete remember_me key: %w", err)
 		}

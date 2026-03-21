@@ -1222,6 +1222,174 @@ func TestRefreshToken_RedisFailure(t *testing.T) {
 }
 
 // =============================================================================
+// Grace Period Tests
+// =============================================================================
+
+func TestRefreshToken_GraceTokenAccepted(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
+	}
+
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	oldRefreshToken := loginResult.RefreshToken
+	time.Sleep(jwtTimestampBuffer)
+
+	// First refresh rotates the token, old token goes to grace key
+	result1, err := service.RefreshToken(context.Background(), oldRefreshToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("First RefreshToken() error = %v", err)
+	}
+
+	// Verify grace key contains old token
+	graceKey := "refresh_token_grace:1:" + loginResult.SessionID
+	graceVal, err := mr.Get(graceKey)
+	if err != nil {
+		t.Fatalf("Grace key not found in Redis: %v", err)
+	}
+	if graceVal != oldRefreshToken {
+		t.Error("Grace key should contain the old refresh token")
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Second refresh with old token should succeed via grace key
+	result2, err := service.RefreshToken(context.Background(), oldRefreshToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("Grace refresh should succeed, got error: %v", err)
+	}
+	if result2.RefreshToken == result1.RefreshToken {
+		t.Error("Grace refresh should issue a new token")
+	}
+}
+
+func TestRefreshToken_GraceTokenExpires(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
+	}
+
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	oldRefreshToken := loginResult.RefreshToken
+	time.Sleep(jwtTimestampBuffer)
+
+	// Rotate token
+	_, err = service.RefreshToken(context.Background(), oldRefreshToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("First RefreshToken() error = %v", err)
+	}
+
+	// Fast-forward past grace period
+	mr.FastForward(61 * time.Second)
+
+	// Old token should now be rejected
+	_, err = service.RefreshToken(context.Background(), oldRefreshToken, loginResult.SessionID)
+	if !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Expected ErrInvalidRefreshToken after grace expiry, got: %v", err)
+	}
+}
+
+func TestRefreshToken_DoubleRotationGrace(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
+	}
+
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	originalToken := loginResult.RefreshToken
+	time.Sleep(jwtTimestampBuffer)
+
+	// Tab A refreshes: original → tokenA (grace has original)
+	resultA, err := service.RefreshToken(context.Background(), originalToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("Tab A refresh error = %v", err)
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Tab B refreshes with original via grace: original → tokenB (grace has tokenA)
+	resultB, err := service.RefreshToken(context.Background(), originalToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("Tab B refresh error = %v", err)
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Tab C tries with original — should fail (grace has tokenA, primary has tokenB)
+	_, err = service.RefreshToken(context.Background(), originalToken, loginResult.SessionID)
+	if !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Tab C should fail with ErrInvalidRefreshToken, got: %v", err)
+	}
+
+	// But Tab A's token should still work via grace
+	_, err = service.RefreshToken(context.Background(), resultA.RefreshToken, loginResult.SessionID)
+	if err != nil {
+		t.Errorf("Tab A's token should still work via grace, got: %v", err)
+	}
+
+	_ = resultB // used by the rotation above
+}
+
+func TestLogout_CleansGraceKey(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
+	}
+
+	loginResult, err := service.Login(context.Background(), "testuser", "testpassword", false)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	time.Sleep(jwtTimestampBuffer)
+
+	// Refresh to create a grace key
+	_, err = service.RefreshToken(context.Background(), loginResult.RefreshToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("RefreshToken() error = %v", err)
+	}
+
+	graceKey := "refresh_token_grace:1:" + loginResult.SessionID
+	if !mr.Exists(graceKey) {
+		t.Fatal("Grace key should exist after refresh")
+	}
+
+	// Logout with access token
+	err = service.Logout(context.Background(), loginResult.AccessToken, loginResult.SessionID)
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+
+	if mr.Exists(graceKey) {
+		t.Error("Logout should delete the grace key")
+	}
+}
+
+// =============================================================================
 // ValidateToken Tests
 // =============================================================================
 
@@ -1404,9 +1572,9 @@ func TestConcurrentRefreshToken(t *testing.T) {
 		}
 	}
 
-	// At least one should succeed (due to race conditions, others might fail)
-	if successCount == 0 {
-		t.Error("At least one concurrent RefreshToken() should succeed")
+	// Primary refresh + at least one grace refresh should succeed
+	if successCount < 2 {
+		t.Errorf("Expected at least 2 concurrent RefreshToken() to succeed (primary + grace), got %d/%d", successCount, numGoroutines)
 	}
 }
 
