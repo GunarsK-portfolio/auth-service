@@ -413,6 +413,7 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 type TokenStatusResponse struct {
 	Valid         bool              `json:"valid"`
 	TTLSeconds    int64             `json:"ttl_seconds"`
+	UserID        int64             `json:"user_id,omitempty"`
 	Username      string            `json:"username,omitempty"`
 	Email         string            `json:"email,omitempty"`
 	EmailVerified bool              `json:"email_verified"`
@@ -449,6 +450,7 @@ func (h *AuthHandler) TokenStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, TokenStatusResponse{
 		Valid:         true,
 		TTLSeconds:    ttl,
+		UserID:        claims.UserID,
 		Username:      claims.Username,
 		Email:         claims.Email,
 		EmailVerified: claims.EmailVerified,

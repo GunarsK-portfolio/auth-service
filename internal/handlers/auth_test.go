@@ -1234,6 +1234,9 @@ func TestTokenStatus_Success_Cookie(t *testing.T) {
 	if response.TTLSeconds != 600 {
 		t.Errorf("expected TTLSeconds=600, got %d", response.TTLSeconds)
 	}
+	if response.UserID != 1 {
+		t.Errorf("expected UserID=1, got %d", response.UserID)
+	}
 	if response.Scopes["profile"] != "edit" {
 		t.Errorf("expected scopes[profile]=edit, got %v", response.Scopes)
 	}
