@@ -100,6 +100,7 @@ type RegisterResponse struct {
 
 // ProfileUpdateRequest contains fields for updating user profile.
 type ProfileUpdateRequest struct {
+	Username    *string `json:"username"`
 	Email       *string `json:"email"`
 	DisplayName *string `json:"display_name"`
 }
@@ -121,7 +122,7 @@ type ChangePasswordRequest struct {
 
 // AuthService defines authentication operations.
 type AuthService interface {
-	Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error)
+	Login(ctx context.Context, identifier, password string, rememberMe bool) (*LoginResponse, error)
 	Logout(ctx context.Context, token, sessionID string) error
 	RefreshToken(ctx context.Context, refreshToken, sessionID string) (*LoginResponse, error)
 	ValidateToken(token string) (int64, error)
@@ -209,8 +210,8 @@ func (s *authService) runInTx(ctx context.Context, fn func(tx *gorm.DB) error) e
 	return s.db.WithContext(ctx).Transaction(fn)
 }
 
-func (s *authService) Login(ctx context.Context, username, password string, rememberMe bool) (*LoginResponse, error) {
-	user, err := s.userRepo.FindByUsername(ctx, username)
+func (s *authService) Login(ctx context.Context, identifier, password string, rememberMe bool) (*LoginResponse, error) {
+	user, err := s.userRepo.FindByUsernameOrEmail(ctx, identifier)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -560,6 +561,18 @@ func (s *authService) UpdateProfile(ctx context.Context, userID int64, req Profi
 
 		user.Email = *req.Email
 		user.EmailVerified = false
+	}
+
+	usernameChanged := req.Username != nil && *req.Username != user.Username
+	if usernameChanged {
+		existing, err := s.userRepo.FindByUsername(ctx, *req.Username)
+		if err == nil && existing != nil {
+			return nil, ErrUsernameTaken
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("failed to check username uniqueness: %w", err)
+		}
+		user.Username = *req.Username
 	}
 
 	if req.DisplayName != nil {

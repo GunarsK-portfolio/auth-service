@@ -26,6 +26,26 @@ const (
 	oauthRateLimitWindow = time.Minute
 )
 
+// redactPII masks a string for audit logging. Emails are masked to
+// "ab***@domain.com", other values to "ab***".
+func redactPII(s string) string {
+	if s == "" {
+		return ""
+	}
+	if at := strings.Index(s, "@"); at > 0 {
+		local := s[:at]
+		domain := s[at:]
+		if len(local) <= 2 {
+			return local + "***" + domain
+		}
+		return local[:2] + "***" + domain
+	}
+	if len(s) <= 2 {
+		return s + "***"
+	}
+	return s[:2] + "***"
+}
+
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
 	authService        service.AuthService
@@ -65,7 +85,7 @@ func NewAuthHandler(
 
 // LoginRequest represents the login request payload.
 type LoginRequest struct {
-	Username   string `json:"username" binding:"required"`
+	Identifier string `json:"identifier" binding:"required"`
 	Password   string `json:"password" binding:"required"`
 	RememberMe bool   `json:"remember_me"`
 }
@@ -94,7 +114,7 @@ type LoginResponse struct {
 
 // RegisterRequest represents the registration request payload.
 type RegisterRequest struct {
-	Username string `json:"username" binding:"required,min=3,max=50"`
+	Username string `json:"username" binding:"required,min=3,max=50,excludesall= @"`
 	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
 	RoleCode string `json:"role_code,omitempty" example:"read-only"` // Any valid role not in denied list (default: admin, rpg-admin)
@@ -138,26 +158,26 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		switch {
 		case errors.Is(err, service.ErrUsernameTaken):
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
+				"username": redactPII(req.Username),
 				"reason":   "username_taken",
 			})
 			commonHandlers.RespondError(c, http.StatusConflict, "username or email already in use")
 		case errors.Is(err, service.ErrEmailTaken):
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
-				"email":  req.Email,
+				"email":  redactPII(req.Email),
 				"reason": "email_taken",
 			})
 			commonHandlers.RespondError(c, http.StatusConflict, "username or email already in use")
 		case errors.Is(err, service.ErrRoleNotAllowed):
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
-				"username":  req.Username,
+				"username":  redactPII(req.Username),
 				"role_code": req.RoleCode,
 				"reason":    "role_not_allowed",
 			})
 			commonHandlers.RespondError(c, http.StatusForbidden, "role not allowed for self-registration")
 		case errors.Is(err, service.ErrInvalidRoleCode):
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
-				"username":  req.Username,
+				"username":  redactPII(req.Username),
 				"role_code": req.RoleCode,
 				"reason":    "invalid_role_code",
 			})
@@ -166,7 +186,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			commonHandlers.RespondError(c, http.StatusBadRequest, "password exceeds maximum length")
 		default:
 			_ = audit.LogFromContext(c, h.actionLogRepo, "registration_failure", nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
+				"username": redactPII(req.Username),
 				"reason":   "internal_error",
 			})
 			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "registration failed")
@@ -176,7 +196,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	source := "auth-service"
 	_ = audit.LogAction(c, h.actionLogRepo, "registration_success", nil, nil, &result.UserID, &source, map[string]interface{}{
-		"username": result.Username,
+		"username": redactPII(result.Username),
 	})
 
 	c.JSON(http.StatusCreated, RegisterResponse{
@@ -204,19 +224,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password, req.RememberMe)
+	response, err := h.authService.Login(c.Request.Context(), req.Identifier, req.Password, req.RememberMe)
 	if err != nil {
 		source := "auth-service"
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
-				"reason":   "invalid_credentials",
+				"identifier": redactPII(req.Identifier),
+				"reason":     "invalid_credentials",
 			})
 			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
 		} else {
 			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
-				"reason":   "internal_error",
+				"identifier": redactPII(req.Identifier),
+				"reason":     "internal_error",
 			})
 			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "login failed")
 		}
@@ -242,7 +262,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// Log successful login with explicit user_id
 	source := "auth-service"
 	_ = audit.LogAction(c, h.actionLogRepo, audit.ActionLoginSuccess, nil, nil, &response.UserID, &source, map[string]interface{}{
-		"username": response.Username,
+		"username": redactPII(response.Username),
 	})
 
 	c.JSON(http.StatusOK, LoginResponse{
@@ -466,6 +486,7 @@ type VerifyEmailRequest struct {
 
 // ProfileUpdateRequest represents the profile update request payload.
 type ProfileUpdateRequest struct {
+	Username    *string `json:"username" binding:"omitempty,min=3,max=50,excludesall= @"`
 	Email       *string `json:"email" binding:"omitempty,email,max=100"`
 	DisplayName *string `json:"display_name" binding:"omitempty,max=100"`
 }
@@ -590,17 +611,20 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	if req.Email == nil && req.DisplayName == nil {
+	if req.Username == nil && req.Email == nil && req.DisplayName == nil {
 		commonHandlers.RespondError(c, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
 
 	result, err := h.authService.UpdateProfile(c.Request.Context(), claims.UserID, service.ProfileUpdateRequest{
+		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: req.DisplayName,
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrUsernameTaken):
+			commonHandlers.RespondError(c, http.StatusConflict, "username already taken")
 		case errors.Is(err, service.ErrEmailTaken):
 			commonHandlers.RespondError(c, http.StatusConflict, "email already in use")
 		case errors.Is(err, service.ErrOAuthUserCannotChangeEmail):
