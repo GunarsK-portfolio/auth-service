@@ -1,19 +1,44 @@
 basePath: /api/v1
 definitions:
+  handlers.ChangePasswordRequest:
+    properties:
+      current_password:
+        type: string
+      new_password:
+        maxLength: 72
+        minLength: 8
+        type: string
+    required:
+    - current_password
+    - new_password
+    type: object
+  handlers.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
   handlers.LoginRequest:
     properties:
+      identifier:
+        type: string
       password:
         type: string
       remember_me:
         type: boolean
-      username:
-        type: string
     required:
+    - identifier
     - password
-    - username
     type: object
   handlers.LoginResponse:
     properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
       expires_in:
         type: integer
       scopes:
@@ -25,6 +50,19 @@ definitions:
       user_id:
         type: integer
       username:
+        type: string
+    type: object
+  handlers.ProfileUpdateRequest:
+    properties:
+      display_name:
+        maxLength: 100
+        type: string
+      email:
+        maxLength: 100
+        type: string
+      username:
+        maxLength: 50
+        minLength: 3
         type: string
     type: object
   handlers.RegisterRequest:
@@ -59,13 +97,33 @@ definitions:
       username:
         type: string
     type: object
+  handlers.ResetPasswordRequest:
+    properties:
+      new_password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - new_password
+    - token
+    type: object
   handlers.TokenStatusResponse:
     properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
       scopes:
         additionalProperties:
           type: string
         type: object
       ttl_seconds:
+        type: integer
+      user_id:
         type: integer
       username:
         type: string
@@ -90,6 +148,26 @@ definitions:
       valid:
         type: boolean
     type: object
+  handlers.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    required:
+    - token
+    type: object
+  service.ProfileResponse:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      user_id:
+        type: integer
+      username:
+        type: string
+    type: object
 host: localhost:8084
 info:
   contact: {}
@@ -97,6 +175,86 @@ info:
   title: Portfolio Auth Service API
   version: "1.0"
 paths:
+  /auth/change-password:
+    post:
+      consumes:
+      - application/json
+      description: Change the authenticated user's password
+      parameters:
+      - description: Password change data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change password
+      tags:
+      - auth
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Send a password reset email if the account exists and is verified
+      parameters:
+      - description: Email address
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Request password reset
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:
@@ -150,6 +308,54 @@ paths:
       security:
       - BearerAuth: []
       summary: User logout
+      tags:
+      - auth
+  /auth/profile:
+    patch:
+      consumes:
+      - application/json
+      description: Update email and/or display name
+      parameters:
+      - description: Profile update data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ProfileUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/service.ProfileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user profile
       tags:
       - auth
   /auth/refresh:
@@ -217,6 +423,75 @@ paths:
       summary: User registration
       tags:
       - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Set a new password using a valid reset token
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Reset password with token
+      tags:
+      - auth
+  /auth/send-verification:
+    post:
+      description: Send email verification link to the authenticated user's email
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Send verification email
+      tags:
+      - auth
   /auth/token-status:
     get:
       description: Check if token is valid and return remaining TTL (reads from cookie
@@ -269,6 +544,42 @@ paths:
               type: string
             type: object
       summary: Validate access token
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: Verify email using token from verification email
+      parameters:
+      - description: Verification token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Verify email address
       tags:
       - auth
 securityDefinitions:

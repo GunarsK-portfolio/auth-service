@@ -30,13 +30,14 @@ const (
 // =============================================================================
 
 type mockUserRepository struct {
-	findByUsernameFunc func(ctx context.Context, username string) (*models.User, error)
-	findByEmailFunc    func(ctx context.Context, email string) (*models.User, error)
-	findByIDFunc       func(ctx context.Context, id int64) (*models.User, error)
-	createFunc         func(ctx context.Context, user *models.User) error
-	updateFunc         func(ctx context.Context, user *models.User) error
-	getUserScopesFunc  func(ctx context.Context, userID int64) (map[string]string, error)
-	findRoleByCodeFunc func(ctx context.Context, code string) (*models.Role, error)
+	findByUsernameFunc        func(ctx context.Context, username string) (*models.User, error)
+	findByEmailFunc           func(ctx context.Context, email string) (*models.User, error)
+	findByUsernameOrEmailFunc func(ctx context.Context, identifier string) (*models.User, error)
+	findByIDFunc              func(ctx context.Context, id int64) (*models.User, error)
+	createFunc                func(ctx context.Context, user *models.User) error
+	updateFunc                func(ctx context.Context, user *models.User) error
+	getUserScopesFunc         func(ctx context.Context, userID int64) (map[string]string, error)
+	findRoleByCodeFunc        func(ctx context.Context, code string) (*models.Role, error)
 }
 
 // =============================================================================
@@ -166,6 +167,13 @@ func (m *mockUserRepository) FindByUsername(ctx context.Context, username string
 func (m *mockUserRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	if m.findByEmailFunc != nil {
 		return m.findByEmailFunc(ctx, email)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockUserRepository) FindByUsernameOrEmail(ctx context.Context, identifier string) (*models.User, error) {
+	if m.findByUsernameOrEmailFunc != nil {
+		return m.findByUsernameOrEmailFunc(ctx, identifier)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -309,7 +317,7 @@ func TestLogin_Success(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -351,7 +359,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 
@@ -372,7 +380,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 
 	passwordHash := hashPassword(t, "correctpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -405,13 +413,13 @@ func TestLogin_EmptyCredentials(t *testing.T) {
 		{"both empty", "", ""},
 	}
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
-		if username == "" {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
+		if identifier == "" {
 			return nil, gorm.ErrRecordNotFound
 		}
 		return &models.User{
 			ID:           1,
-			Username:     username,
+			Username:     identifier,
 			PasswordHash: ptrString(hashPassword(t, "password")),
 		}, nil
 	}
@@ -431,7 +439,7 @@ func TestLogin_RedisFailure(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -456,7 +464,7 @@ func TestLogin_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -484,7 +492,7 @@ func TestLogin_RememberMe_StoresInRedis(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -518,7 +526,7 @@ func TestLogin_NoRememberMe_StoresFalseInRedis(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -551,7 +559,7 @@ func TestRefreshToken_PreservesRememberMe(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -597,7 +605,7 @@ func TestRefreshToken_RememberMeFalsePreserved(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -630,7 +638,7 @@ func TestRefreshToken_RememberMeDefaultsFalseOnMiss(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -665,7 +673,7 @@ func TestLogout_CleansUpRememberMe(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -718,7 +726,7 @@ func TestLogin_WithScopes(t *testing.T) {
 		"projects": "delete",
 	}
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -761,7 +769,7 @@ func TestLogin_WithNilScopes(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -794,7 +802,7 @@ func TestLogin_GetUserScopesError(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -823,7 +831,7 @@ func TestRefreshToken_PreservesScopes(t *testing.T) {
 		"projects": "read",
 	}
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -877,7 +885,7 @@ func TestRefreshToken_ScopesRefreshedFromDB(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -937,7 +945,7 @@ func TestLogout_Success(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -1054,7 +1062,7 @@ func TestRefreshToken_Success(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -1230,7 +1238,7 @@ func TestRefreshToken_GraceTokenAccepted(t *testing.T) {
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
 	}
 
@@ -1275,7 +1283,7 @@ func TestRefreshToken_GraceTokenExpires(t *testing.T) {
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
 	}
 
@@ -1308,7 +1316,7 @@ func TestRefreshToken_DoubleRotationGrace(t *testing.T) {
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
 	}
 
@@ -1356,7 +1364,7 @@ func TestLogout_CleansGraceKey(t *testing.T) {
 	defer mr.Close()
 
 	passwordHash := hashPassword(t, "testpassword")
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{ID: 1, Username: "testuser", PasswordHash: &passwordHash}, nil
 	}
 
@@ -1505,10 +1513,10 @@ func TestConcurrentLogins(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
-			Username:     username,
+			Username:     identifier,
 			PasswordHash: &passwordHash,
 		}, nil
 	}
@@ -1536,7 +1544,7 @@ func TestConcurrentRefreshToken(t *testing.T) {
 
 	passwordHash := hashPassword(t, "testpassword")
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "testuser",
@@ -2266,7 +2274,7 @@ func TestLogin_TokenContainsEmailClaims(t *testing.T) {
 		PasswordHash:  &passwordHash,
 	}
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return user, nil
 	}
 	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
@@ -2737,7 +2745,7 @@ func TestLogin_NilPasswordHash_ReturnsInvalidCredentials(t *testing.T) {
 	service, mr, mockRepo, _ := setupTestAuthService(t)
 	defer mr.Close()
 
-	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
 		return &models.User{
 			ID:           1,
 			Username:     "googleuser",
@@ -3026,5 +3034,99 @@ func TestOAuthUsername_Uniqueness(t *testing.T) {
 
 	if u1 == u2 {
 		t.Error("oauthUsername() should generate unique usernames for same email")
+	}
+}
+
+// =============================================================================
+// Login with Email Tests
+// =============================================================================
+
+func TestLogin_WithEmail(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	passwordHash := hashPassword(t, "testpassword")
+
+	mockRepo.findByUsernameOrEmailFunc = func(ctx context.Context, identifier string) (*models.User, error) {
+		if identifier == "test@example.com" {
+			return &models.User{
+				ID:           1,
+				Username:     "testuser",
+				Email:        "test@example.com",
+				PasswordHash: &passwordHash,
+			}, nil
+		}
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	result, err := service.Login(context.Background(), "test@example.com", "testpassword", false)
+
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	if result.AccessToken == "" {
+		t.Error("Login() should return access token when logging in with email")
+	}
+}
+
+// =============================================================================
+// Username Change via UpdateProfile Tests
+// =============================================================================
+
+func TestUpdateProfile_ChangeUsername(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:       1,
+			Username: "olduser",
+			Email:    "test@example.com",
+		}, nil
+	}
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	mockRepo.updateFunc = func(ctx context.Context, user *models.User) error {
+		return nil
+	}
+
+	newUsername := "newuser"
+	result, err := service.UpdateProfile(context.Background(), 1, ProfileUpdateRequest{
+		Username: &newUsername,
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateProfile() error = %v", err)
+	}
+
+	if result.Username != "newuser" {
+		t.Errorf("UpdateProfile() Username = %s, want newuser", result.Username)
+	}
+}
+
+func TestUpdateProfile_UsernameTaken(t *testing.T) {
+	service, mr, mockRepo, _ := setupTestAuthService(t)
+	defer mr.Close()
+
+	mockRepo.findByIDFunc = func(ctx context.Context, id int64) (*models.User, error) {
+		return &models.User{
+			ID:       1,
+			Username: "olduser",
+			Email:    "test@example.com",
+		}, nil
+	}
+	mockRepo.findByUsernameFunc = func(ctx context.Context, username string) (*models.User, error) {
+		return &models.User{ID: 2, Username: "taken"}, nil
+	}
+
+	takenUsername := "taken"
+	_, err := service.UpdateProfile(context.Background(), 1, ProfileUpdateRequest{
+		Username: &takenUsername,
+	})
+
+	if !errors.Is(err, ErrUsernameTaken) {
+		t.Errorf("UpdateProfile() error = %v, want %v", err, ErrUsernameTaken)
 	}
 }

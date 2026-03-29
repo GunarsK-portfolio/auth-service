@@ -13,6 +13,7 @@ import (
 type UserRepository interface {
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	FindByUsernameOrEmail(ctx context.Context, identifier string) (*models.User, error)
 	FindByID(ctx context.Context, id int64) (*models.User, error)
 	Create(ctx context.Context, user *models.User) error
 	Update(ctx context.Context, user *models.User) error
@@ -43,6 +44,15 @@ func (r *userRepository) FindByEmail(ctx context.Context, email string) (*models
 	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to find user by email %s: %w", email, err)
+	}
+	return &user, nil
+}
+
+func (r *userRepository) FindByUsernameOrEmail(ctx context.Context, identifier string) (*models.User, error) {
+	var user models.User
+	err := r.db.WithContext(ctx).Where("username = ? OR email = ?", identifier, identifier).First(&user).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user by username or email %s: %w", identifier, err)
 	}
 	return &user, nil
 }

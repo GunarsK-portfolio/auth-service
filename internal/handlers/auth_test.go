@@ -24,7 +24,7 @@ import (
 // =============================================================================
 
 type mockAuthService struct {
-	loginFunc                   func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error)
+	loginFunc                   func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error)
 	logoutFunc                  func(ctx context.Context, token, sessionID string) error
 	refreshTokenFunc            func(ctx context.Context, refreshToken, sessionID string) (*service.LoginResponse, error)
 	validateTokenFunc           func(token string) (int64, error)
@@ -57,9 +57,9 @@ func (m *mockAuthService) ResetPassword(ctx context.Context, token, newPassword 
 	return errors.New("not implemented")
 }
 
-func (m *mockAuthService) Login(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+func (m *mockAuthService) Login(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 	if m.loginFunc != nil {
-		return m.loginFunc(ctx, username, password, rememberMe)
+		return m.loginFunc(ctx, identifier, password, rememberMe)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -282,7 +282,7 @@ func createTestContext(method, path string, body interface{}) (*httptest.Respons
 
 func TestLogin_Success(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "access_token_123",
 				RefreshToken: "refresh_token_456",
@@ -296,8 +296,8 @@ func TestLogin_Success(t *testing.T) {
 
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
-		Username: "testuser",
-		Password: "password123",
+		Identifier: "testuser",
+		Password:   "password123",
 	})
 
 	handler.Login(c)
@@ -364,15 +364,15 @@ func TestLogin_Success(t *testing.T) {
 
 func TestLogin_InvalidCredentials(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return nil, service.ErrInvalidCredentials
 		},
 	}
 
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
-		Username: "testuser",
-		Password: "wrongpassword",
+		Identifier: "testuser",
+		Password:   "wrongpassword",
 	})
 
 	handler.Login(c)
@@ -400,7 +400,7 @@ func TestLogin_MissingPassword(t *testing.T) {
 	mockService := &mockAuthService{}
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]string{
-		"username": "testuser",
+		"identifier": "testuser",
 	})
 
 	handler.Login(c)
@@ -429,7 +429,7 @@ func TestLogin_InvalidJSON(t *testing.T) {
 
 func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "access_token_with_scopes",
 				RefreshToken: "refresh_token_456",
@@ -456,8 +456,8 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 	handler := NewAuthHandler(mockService, actionLogRepo, cookieHelper, jwtService, nil, []string{"https://localhost:8543"}, 3, "1h0m0s")
 
 	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
-		Username: "admin",
-		Password: "password123",
+		Identifier: "admin",
+		Password:   "password123",
 	})
 
 	handler.Login(c)
@@ -488,7 +488,7 @@ func TestLogin_ReturnsScopesFromToken(t *testing.T) {
 
 func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			if !rememberMe {
 				t.Error("expected rememberMe=true")
 			}
@@ -506,7 +506,7 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]interface{}{
-		"username":    "testuser",
+		"identifier":  "testuser",
 		"password":    "password123",
 		"remember_me": true,
 	})
@@ -552,7 +552,7 @@ func TestLogin_RememberMe_True_PersistentCookies(t *testing.T) {
 
 func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			if rememberMe {
 				t.Error("expected rememberMe=false")
 			}
@@ -570,7 +570,7 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]interface{}{
-		"username":    "testuser",
+		"identifier":  "testuser",
 		"password":    "password123",
 		"remember_me": false,
 	})
@@ -616,7 +616,7 @@ func TestLogin_RememberMe_False_SessionCookies(t *testing.T) {
 
 func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			if rememberMe {
 				t.Error("expected rememberMe=false when field is omitted")
 			}
@@ -634,8 +634,8 @@ func TestLogin_RememberMe_DefaultFalse(t *testing.T) {
 	handler := setupTestHandler(mockService)
 	// Omit remember_me field entirely
 	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]string{
-		"username": "testuser",
-		"password": "password123",
+		"identifier": "testuser",
+		"password":   "password123",
 	})
 
 	handler.Login(c)
@@ -1493,7 +1493,7 @@ func TestTokenStatus_CookiePriorityOverHeader(t *testing.T) {
 
 func TestLogin_TokensNotInResponseBody(t *testing.T) {
 	mockService := &mockAuthService{
-		loginFunc: func(ctx context.Context, username, password string, rememberMe bool) (*service.LoginResponse, error) {
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
 			return &service.LoginResponse{
 				AccessToken:  "test_access_token",
 				RefreshToken: "test_refresh_token",
@@ -1507,8 +1507,8 @@ func TestLogin_TokensNotInResponseBody(t *testing.T) {
 
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
-		Username: "testuser",
-		Password: "password123",
+		Identifier: "testuser",
+		Password:   "password123",
 	})
 
 	handler.Login(c)
@@ -2247,5 +2247,116 @@ func TestResetPassword_ServiceError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+// =============================================================================
+// Login with Identifier Tests
+// =============================================================================
+
+func TestLogin_WithEmailIdentifier(t *testing.T) {
+	mockService := &mockAuthService{
+		loginFunc: func(ctx context.Context, identifier, password string, rememberMe bool) (*service.LoginResponse, error) {
+			if identifier != "user@example.com" {
+				t.Errorf("expected identifier=user@example.com, got %s", identifier)
+			}
+			return &service.LoginResponse{
+				AccessToken:  "access_token_123",
+				RefreshToken: "refresh_token_456",
+				ExpiresIn:    900,
+				UserID:       1,
+				Username:     "testuser",
+				SessionID:    "session_abc123",
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+	w, c := createTestContext("POST", "/api/v1/auth/login", LoginRequest{
+		Identifier: "user@example.com",
+		Password:   "password123",
+	})
+
+	handler.Login(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+// =============================================================================
+// Username Change via Profile Update Tests
+// =============================================================================
+
+func TestUpdateProfile_ChangeUsername(t *testing.T) {
+	newUsername := "newuser"
+	mockService := &mockAuthService{
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
+			return 600, &jwt.Claims{UserID: 1, Username: "olduser"}, nil
+		},
+		updateProfileFunc: func(ctx context.Context, userID int64, req service.ProfileUpdateRequest) (*service.ProfileResponse, error) {
+			if req.Username == nil || *req.Username != "newuser" {
+				t.Errorf("expected username=newuser, got %v", req.Username)
+			}
+			return &service.ProfileResponse{
+				UserID:   1,
+				Username: "newuser",
+				Email:    "test@example.com",
+			}, nil
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	body, _ := json.Marshal(map[string]string{"username": newUsername})
+	c.Request = httptest.NewRequest("PATCH", "/api/v1/auth/profile", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Authorization", "Bearer valid_token")
+
+	handler.UpdateProfile(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var response service.ProfileResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if response.Username != "newuser" {
+		t.Errorf("expected username=newuser, got %s", response.Username)
+	}
+}
+
+func TestUpdateProfile_UsernameTaken_Returns409(t *testing.T) {
+	mockService := &mockAuthService{
+		validateTokenWithClaimsFunc: func(token string) (int64, *jwt.Claims, error) {
+			return 600, &jwt.Claims{UserID: 1, Username: "olduser"}, nil
+		},
+		updateProfileFunc: func(ctx context.Context, userID int64, req service.ProfileUpdateRequest) (*service.ProfileResponse, error) {
+			return nil, service.ErrUsernameTaken
+		},
+	}
+
+	handler := setupTestHandler(mockService)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	body, _ := json.Marshal(map[string]string{"username": "taken"})
+	c.Request = httptest.NewRequest("PATCH", "/api/v1/auth/profile", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Authorization", "Bearer valid_token")
+
+	handler.UpdateProfile(c)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
 	}
 }

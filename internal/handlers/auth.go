@@ -65,7 +65,7 @@ func NewAuthHandler(
 
 // LoginRequest represents the login request payload.
 type LoginRequest struct {
-	Username   string `json:"username" binding:"required"`
+	Identifier string `json:"identifier" binding:"required"`
 	Password   string `json:"password" binding:"required"`
 	RememberMe bool   `json:"remember_me"`
 }
@@ -204,19 +204,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	response, err := h.authService.Login(c.Request.Context(), req.Username, req.Password, req.RememberMe)
+	response, err := h.authService.Login(c.Request.Context(), req.Identifier, req.Password, req.RememberMe)
 	if err != nil {
 		source := "auth-service"
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
-				"reason":   "invalid_credentials",
+				"identifier": req.Identifier,
+				"reason":     "invalid_credentials",
 			})
 			commonHandlers.LogAndRespondError(c, http.StatusUnauthorized, err, "invalid credentials")
 		} else {
 			_ = audit.LogFromContext(c, h.actionLogRepo, audit.ActionLoginFailure, nil, nil, &source, map[string]interface{}{
-				"username": req.Username,
-				"reason":   "internal_error",
+				"identifier": req.Identifier,
+				"reason":     "internal_error",
 			})
 			commonHandlers.LogAndRespondError(c, http.StatusInternalServerError, err, "login failed")
 		}
@@ -466,6 +466,7 @@ type VerifyEmailRequest struct {
 
 // ProfileUpdateRequest represents the profile update request payload.
 type ProfileUpdateRequest struct {
+	Username    *string `json:"username" binding:"omitempty,min=3,max=50"`
 	Email       *string `json:"email" binding:"omitempty,email,max=100"`
 	DisplayName *string `json:"display_name" binding:"omitempty,max=100"`
 }
@@ -590,17 +591,20 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	if req.Email == nil && req.DisplayName == nil {
+	if req.Username == nil && req.Email == nil && req.DisplayName == nil {
 		commonHandlers.RespondError(c, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
 
 	result, err := h.authService.UpdateProfile(c.Request.Context(), claims.UserID, service.ProfileUpdateRequest{
+		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: req.DisplayName,
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrUsernameTaken):
+			commonHandlers.RespondError(c, http.StatusConflict, "username already taken")
 		case errors.Is(err, service.ErrEmailTaken):
 			commonHandlers.RespondError(c, http.StatusConflict, "email already in use")
 		case errors.Is(err, service.ErrOAuthUserCannotChangeEmail):
