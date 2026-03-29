@@ -382,7 +382,7 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 	}
 }
 
-func TestLogin_MissingUsername(t *testing.T) {
+func TestLogin_MissingIdentifier(t *testing.T) {
 	mockService := &mockAuthService{}
 	handler := setupTestHandler(mockService)
 	w, c := createTestContext("POST", "/api/v1/auth/login", map[string]string{
@@ -2358,5 +2358,34 @@ func TestUpdateProfile_UsernameTaken_Returns409(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
+	}
+}
+
+// =============================================================================
+// RedactPII Tests
+// =============================================================================
+
+func TestRedactPII(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"short username", "ab", "ab***"},
+		{"single char", "a", "a***"},
+		{"normal username", "testuser", "te***"},
+		{"email", "alice@example.com", "al***@example.com"},
+		{"short email local", "ab@example.com", "ab***@example.com"},
+		{"single char email", "a@example.com", "a***@example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactPII(tt.input)
+			if got != tt.want {
+				t.Errorf("redactPII(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
