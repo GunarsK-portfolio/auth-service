@@ -114,7 +114,7 @@ type LoginResponse struct {
 
 // RegisterRequest represents the registration request payload.
 type RegisterRequest struct {
-	Username string `json:"username" binding:"required,min=3,max=50,excludesall= "`
+	Username string `json:"username" binding:"required,min=3,max=50,excludesall= @"`
 	Email    string `json:"email" binding:"required,email,max=100" format:"email"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
 	RoleCode string `json:"role_code,omitempty" example:"read-only"` // Any valid role not in denied list (default: admin, rpg-admin)
@@ -486,7 +486,7 @@ type VerifyEmailRequest struct {
 
 // ProfileUpdateRequest represents the profile update request payload.
 type ProfileUpdateRequest struct {
-	Username    *string `json:"username" binding:"omitempty,min=3,max=50,excludesall= "`
+	Username    *string `json:"username" binding:"omitempty,min=3,max=50,excludesall= @"`
 	Email       *string `json:"email" binding:"omitempty,email,max=100"`
 	DisplayName *string `json:"display_name" binding:"omitempty,max=100"`
 }
