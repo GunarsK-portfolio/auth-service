@@ -36,7 +36,7 @@ const (
 	redisRefreshTokenPrefix      = "refresh_token:%d:%s"
 	redisRefreshTokenGracePrefix = "refresh_token_grace:%d:%s"
 	redisRememberMePrefix        = "remember_me:%d:%s"
-	refreshGracePeriod           = 60 * time.Second
+	refreshGracePeriod           = 5 * time.Minute
 )
 
 var (

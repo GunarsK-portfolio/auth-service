@@ -1302,7 +1302,7 @@ func TestRefreshToken_GraceTokenExpires(t *testing.T) {
 	}
 
 	// Fast-forward past grace period
-	mr.FastForward(61 * time.Second)
+	mr.FastForward(refreshGracePeriod + time.Second)
 
 	// Old token should now be rejected
 	_, err = service.RefreshToken(context.Background(), oldRefreshToken, loginResult.SessionID)
