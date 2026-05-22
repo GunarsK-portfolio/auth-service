@@ -32,7 +32,7 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 
 func (r *userRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
-	err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error
+	err := r.db.WithContext(ctx).Where("LOWER(username) = LOWER(?)", username).First(&user).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to find user by username %s: %w", username, err)
 	}
@@ -41,7 +41,7 @@ func (r *userRepository) FindByUsername(ctx context.Context, username string) (*
 
 func (r *userRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	err := r.db.WithContext(ctx).Where("LOWER(email) = LOWER(?)", email).First(&user).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to find user by email %s: %w", email, err)
 	}
@@ -50,7 +50,7 @@ func (r *userRepository) FindByEmail(ctx context.Context, email string) (*models
 
 func (r *userRepository) FindByUsernameOrEmail(ctx context.Context, identifier string) (*models.User, error) {
 	var user models.User
-	err := r.db.WithContext(ctx).Where("username = ? OR email = ?", identifier, identifier).First(&user).Error
+	err := r.db.WithContext(ctx).Where("LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)", identifier, identifier).First(&user).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to find user by username or email %s: %w", identifier, err)
 	}
