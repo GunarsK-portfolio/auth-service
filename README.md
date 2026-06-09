@@ -19,7 +19,7 @@ JWT-based authentication service with refresh token support.
 
 ## Tech Stack
 
-- **Language**: Go 1.25.3
+- **Language**: Go 1.26.4
 - **Framework**: Gin
 - **Database**: PostgreSQL (GORM)
 - **Cache**: Redis
@@ -27,7 +27,7 @@ JWT-based authentication service with refresh token support.
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Node.js 22+ and npm 11+
 - PostgreSQL (or use Docker Compose)
 - Redis (or use Docker Compose)
