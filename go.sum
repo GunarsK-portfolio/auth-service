@@ -1,7 +1,7 @@
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
-github.com/GunarsK-portfolio/portfolio-common v0.49.0 h1:fa6V/+9G/bLXug/BZC5X9v4wkxo0P94t1/GxpDxy+Wk=
-github.com/GunarsK-portfolio/portfolio-common v0.49.0/go.mod h1:2ovDQEtN0JTVgkRELhA0ZE+I5oKLmnTgi0Y5lZR9c8c=
+github.com/GunarsK-portfolio/portfolio-common v0.50.0 h1:Te9t8MWL5IP8PFAmktYEid4N1oKJvm2t2ibZKL9MVW8=
+github.com/GunarsK-portfolio/portfolio-common v0.50.0/go.mod h1:0zjgXLw+mymKEKrQ5FqJdNZ62+KvBPLMvyWqJ7l/zBA=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/alicebob/miniredis/v2 v2.38.0 h1:nZAzCR+Lj+Vxk4ZXzm2NuKq2O33RXj1XxJ2e2uP9jiw=
