@@ -13,6 +13,8 @@ RUN go build -o auth-service ./cmd/api
 # Production stage
 FROM alpine:3.24
 
+# Security update - CACHE_BUST is set by CI to force fresh apk upgrade
+ARG CACHE_BUST
 RUN apk upgrade --no-cache && apk --no-cache add ca-certificates
 
 # Create non-root user
